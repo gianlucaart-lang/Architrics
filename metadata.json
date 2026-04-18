@@ -1,0 +1,6 @@
+{
+  "name": "RenovEstimate",
+  "description": "Professional architectural tool for real-time renovation cost estimation with Italian regional multipliers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["Real-time calculation", "Dynamic itemized reporting"]
+}

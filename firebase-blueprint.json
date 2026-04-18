@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "estimate": {
+      "title": "Renovation Estimate",
+      "description": "A saved renovation estimate record",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "total": { "type": "array", "items": { "type": "number" } },
+        "items": { "type": "array" },
+        "config": { "type": "object" },
+        "precision": { "type": "string", "enum": ["preliminary", "developed", "executive"] },
+        "userId": { "type": "string" }
+      },
+      "required": ["clientName", "date", "userId", "config"]
+    }
+  },
+  "firestore": {
+    "/estimates/{estimateId}": {
+      "schema": "estimate",
+      "description": "Collection of renovation estimates"
+    }
+  }
+}

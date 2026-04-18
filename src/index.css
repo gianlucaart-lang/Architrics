@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-serif: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+  
+  --color-brand-bg: #f5f5f7;
+  --color-brand-dark: #1d1d1f;
+  --color-brand-accent: #5d5d81;
+  --color-brand-card: #ffffff;
+  --color-brand-result-bg: rgba(29, 29, 31, 0.85);
+  --color-brand-result-text: #ffffff;
+
+  --shadow-apple: 0 10px 30px rgba(0, 0, 0, 0.05);
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bg text-brand-dark font-sans antialiased;
+  }
+  
+  h1, h2, h3, h4 {
+    @apply font-sans font-bold tracking-tight;
+  }
+
+  /* Extracting standard inputs/selects from design */
+  input[type="number"], select {
+    @apply bg-white border border-black/5 rounded-xl p-3 transition-all text-sm shadow-sm;
+  }
+
+  input[type="number"]:focus, select:focus {
+    @apply ring-2 ring-brand-accent/20 border-brand-accent outline-none;
+  }
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.glass-dark {
+  background: rgba(29, 29, 31, 0.8);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Custom scrollbar matching the minimal ink aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+}
+
+@media (min-width: 1024px) {
+  .detail-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
