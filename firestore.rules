@@ -25,24 +25,20 @@ service cloud.firestore {
       allow update: if isOwner(existing().userId)
         && isOwner(incoming().userId) // Prevent changing owner
         && isValidEstimate(incoming())
-        && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'precision', 'isPinned'])
-          || incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'precision', 'isPinned', 'updatedAt'])
-        );
+        && incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'pinned', 'date']);
         
       allow delete: if isOwner(existing().userId);
     }
 
     function isValidEstimate(data) {
-      return data.keys().hasAll(['clientName', 'date', 'total', 'items', 'config', 'userId', 'precision'])
+      return data.keys().hasAll(['clientName', 'date', 'total', 'items', 'config', 'userId'])
         && data.clientName is string && data.clientName.size() <= 200
         && data.date is string
         && data.total is list && data.total.size() == 2
         && data.items is list
         && data.config is map
         && data.userId == request.auth.uid
-        && data.precision in ['preliminary', 'developed', 'executive']
-        && ( !('isPinned' in data) || data.isPinned is bool );
+        && ( !('pinned' in data) || data.pinned is bool );
     }
   }
 }

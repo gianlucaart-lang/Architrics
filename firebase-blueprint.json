@@ -10,8 +10,8 @@
         "total": { "type": "array", "items": { "type": "number" } },
         "items": { "type": "array" },
         "config": { "type": "object" },
-        "precision": { "type": "string", "enum": ["preliminary", "developed", "executive"] },
-        "userId": { "type": "string" }
+        "userId": { "type": "string" },
+        "pinned": { "type": "boolean" }
       },
       "required": ["clientName", "date", "userId", "config"]
     }
