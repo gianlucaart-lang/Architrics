@@ -28,7 +28,12 @@ import {
   FolderOpen,
   Folder,
   FileText,
-  Volume2
+  Volume2,
+  Pin,
+  Search,
+  Edit3,
+  MoreVertical,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { initializeApp } from 'firebase/app';
@@ -42,6 +47,8 @@ import {
   getDocs, 
   orderBy, 
   doc, 
+  updateDoc,
+  deleteDoc,
   getDoc,
   Timestamp,
   getDocFromServer
@@ -247,6 +254,7 @@ export default function App() {
   // 0. AUTH & DATABASE
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [savedEstimates, setSavedEstimates] = useState<any[]>([]);
+  const [currentProjectID, setCurrentProjectID] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
 
@@ -636,7 +644,7 @@ export default function App() {
       finish, acType, acUnits, includeContingency
     };
 
-    const estimateData = {
+    const estimateData: any = {
       clientName,
       date: new Date().toISOString(),
       total: totals.baseTotal,
@@ -647,18 +655,37 @@ export default function App() {
 
     try {
       if (user) {
-        await addDoc(collection(db, 'estimates'), estimateData);
+        if (currentProjectID && currentProjectID.startsWith('cloud-')) {
+          const docId = currentProjectID.replace('cloud-', '');
+          await updateDoc(doc(db, 'estimates', docId), estimateData);
+          alert("Stima aggiornata correttamente in Cloud.");
+        } else {
+          estimateData.pinned = false;
+          const docRef = await addDoc(collection(db, 'estimates'), estimateData);
+          setCurrentProjectID(`cloud-${docRef.id}`);
+          alert("Stima salvata correttamente in Cloud.");
+        }
         setLastSaved(new Date().toLocaleTimeString());
         await loadSavedEstimates(user.uid);
-        alert("Stima salvata correttamente in Cloud.");
       } else {
         // Fallback Local Storage
         const localData = JSON.parse(localStorage.getItem('local_estimates') || '[]');
-        localData.push({ id: `local-${Date.now()}`, ...estimateData });
+        if (currentProjectID && currentProjectID.startsWith('local-')) {
+          const idx = localData.findIndex((d: any) => d.id === currentProjectID);
+          if (idx !== -1) {
+            localData[idx] = { ...localData[idx], ...estimateData };
+            alert("Stima aggiornata localmente.");
+          }
+        } else {
+          estimateData.pinned = false;
+          const newId = `local-${Date.now()}`;
+          localData.push({ id: newId, ...estimateData });
+          setCurrentProjectID(newId);
+          alert("Stima salvata localmente (Sincronizzazione Cloud disattivata).");
+        }
         localStorage.setItem('local_estimates', JSON.stringify(localData));
         setLastSaved(new Date().toLocaleTimeString());
         await loadSavedEstimates();
-        alert("Stima salvata localmente (Sincronizzazione Cloud disattivata).");
       }
     } catch (e) {
       console.error(e);
@@ -680,8 +707,12 @@ export default function App() {
       const localItems = JSON.parse(localStorage.getItem('local_estimates') || '[]');
       const allItems = [...cloudItems, ...localItems];
       
-      // Ordinamento per data decrescente
-      allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      // Ordinamento: Pinned prima, poi data decrescente
+      allItems.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      });
       setSavedEstimates(allItems);
     } catch (e) { 
       console.error(e); 
@@ -692,6 +723,7 @@ export default function App() {
   };
 
   const applyEstimate = (est: any) => {
+    setCurrentProjectID(est.id);
     const c = est.config;
     setClientName(est.clientName);
     setRegion(c.region); setPropType(c.propType); setArea(c.area); 
@@ -729,6 +761,43 @@ export default function App() {
     setInsulationPct(0); setBalconies(false); setAutomation('none'); setAccessibility(false);
     setPv('none'); setStairs('none'); setCellar(false); setRoof('none'); setFinish(FINISH_LEVELS[2].id);
     setLastSaved(null);
+    setCurrentProjectID(null);
+  };
+
+  const deleteEstimate = async (id: string) => {
+    if (!confirm("Sei sicuro di voler eliminare questa stima?")) return;
+    try {
+      if (id.startsWith('cloud-')) {
+        await deleteDoc(doc(db, 'estimates', id.replace('cloud-', '')));
+      } else {
+        const localData = JSON.parse(localStorage.getItem('local_estimates') || '[]');
+        const filtered = localData.filter((d: any) => d.id !== id);
+        localStorage.setItem('local_estimates', JSON.stringify(filtered));
+      }
+      if (id === currentProjectID) resetProject();
+      await loadSavedEstimates(user?.uid);
+    } catch (e) {
+      console.error(e);
+      alert("Errore durante l'eliminazione.");
+    }
+  };
+
+  const togglePin = async (id: string, currentPinned: boolean) => {
+    try {
+      if (id.startsWith('cloud-')) {
+        await updateDoc(doc(db, 'estimates', id.replace('cloud-', '')), { pinned: !currentPinned });
+      } else {
+        const localData = JSON.parse(localStorage.getItem('local_estimates') || '[]');
+        const idx = localData.findIndex((d: any) => d.id === id);
+        if (idx !== -1) {
+          localData[idx].pinned = !currentPinned;
+          localStorage.setItem('local_estimates', JSON.stringify(localData));
+        }
+      }
+      await loadSavedEstimates(user?.uid);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const scrollToResults = () => {
@@ -910,25 +979,53 @@ export default function App() {
         id="estimate-drawer"
         className="fixed top-0 right-0 h-full w-full sm:w-[380px] glass-dark text-white z-50 transform translate-x-full transition-transform duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] shadow-2xl flex flex-col"
       >
-        <div className="p-8 border-b border-white/10 flex justify-between items-center">
-          <h3 className="font-bold text-2xl tracking-tight">Project Archive</h3>
-          <button 
-            onClick={() => {
-              const drawer = document.getElementById('estimate-drawer');
-              if (drawer) drawer.classList.add('translate-x-full');
-            }}
-            className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-brand-accent transition-colors"
-          >
-            <XCircle className="w-5 h-5" />
-          </button>
+        <div className="p-8 border-b border-white/10 flex flex-col gap-6">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-2xl tracking-tight">Archivio Progetti</h3>
+            <button 
+              onClick={() => {
+                const drawer = document.getElementById('estimate-drawer');
+                if (drawer) drawer.classList.add('translate-x-full');
+              }}
+              className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-brand-accent transition-colors"
+            >
+              <XCircle className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 opacity-30 group-focus-within:opacity-100 transition-opacity" />
+            <input 
+              type="text" 
+              placeholder="Cerca cliente o progetto..." 
+              className="w-full bg-white/5 border border-white/5 rounded-2xl py-3 pl-11 pr-4 text-xs font-bold focus:bg-white/10 focus:ring-1 focus:ring-brand-accent/50 transition-all outline-none"
+              onChange={(e) => {
+                const term = e.target.value.toLowerCase();
+                const items = document.querySelectorAll('.archive-item');
+                const folders = document.querySelectorAll('.archive-folder');
+                
+                items.forEach((item: any) => {
+                  const matches = item.innerText.toLowerCase().includes(term);
+                  item.style.display = matches ? 'block' : 'none';
+                });
+                
+                folders.forEach((folder: any) => {
+                  const matches = folder.querySelector('.folder-name').innerText.toLowerCase().includes(term);
+                  // Also show folder if any child item matches
+                  const children = folder.querySelectorAll('.archive-item');
+                  let childMatches = false;
+                  children.forEach((c: any) => { if(c.innerText.toLowerCase().includes(term)) childMatches = true; });
+                  folder.style.display = (matches || childMatches) ? 'block' : 'none';
+                });
+              }}
+            />
+          </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-dark">
+        <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-dark">
           {savedEstimates.length === 0 ? (
-            <div className="py-20 text-center text-white/20 font-bold uppercase tracking-widest text-xs">Storage is Empty</div>
+            <div className="py-20 text-center text-white/20 font-bold uppercase tracking-widest text-xs">Archivio Vuoto</div>
           ) : (
             (() => {
-              // Group estimates by client name
               const groups: Record<string, any[]> = {};
               savedEstimates.forEach(est => {
                 const name = est.clientName || 'Senza Nome';
@@ -937,38 +1034,70 @@ export default function App() {
               });
 
               return Object.entries(groups).map(([client, estimates]) => (
-                <div key={client} className="space-y-2">
+                <div key={client} className="space-y-3 archive-folder">
                   <div className="flex items-center gap-2 px-2 py-1 opacity-40">
-                    <Folder className="w-3 h-3" />
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">{client}</span>
+                    <Folder className="w-3 h-3 text-brand-accent" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] folder-name">{client}</span>
+                    <span className="text-[8px] bg-white/10 px-1.5 py-0.5 rounded-full">{estimates.length}</span>
                   </div>
-                  {estimates.map(est => {
-                    const dateObj = new Date(est.date);
-                    return (
-                      <button 
-                        key={est.id}
-                        onClick={() => {
-                          applyEstimate(est);
-                          const drawer = document.getElementById('estimate-drawer');
-                          if (drawer) drawer.classList.add('translate-x-full');
-                        }}
-                        className="w-full text-left p-5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all group relative pl-10"
-                      >
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 opacity-20 group-hover:opacity-100 transition-opacity">
-                          <FileText className="w-4 h-4 text-brand-accent" />
+                  <div className="space-y-3">
+                    {estimates.map(est => {
+                      const dateObj = new Date(est.date);
+                      return (
+                        <div key={est.id} className="archive-item group relative">
+                          <div className={`w-full text-left p-5 border rounded-3xl transition-all relative pl-12 ${currentProjectID === est.id ? 'bg-brand-accent/10 border-brand-accent/40' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}>
+                            <button 
+                              onClick={() => {
+                                applyEstimate(est);
+                                const drawer = document.getElementById('estimate-drawer');
+                                if (drawer) drawer.classList.add('translate-x-full');
+                              }}
+                              className="absolute inset-0 w-full h-full text-left pl-12"
+                            >
+                              <div className="absolute left-4 top-5 opacity-20">
+                                <FileText className="w-4 h-4" />
+                              </div>
+                              <div className="flex justify-between items-center mb-1 pr-16">
+                                <span className="text-[8px] font-bold opacity-30 uppercase tracking-[0.1em]">{dateObj.toLocaleDateString()} {dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                <div className="flex items-center gap-1.5">
+                                  {est.pinned && <Pin className="w-2.5 h-2.5 text-brand-accent rotate-45" />}
+                                  {currentProjectID === est.id && (
+                                    <span className="flex items-center gap-1 text-[8px] text-brand-accent animate-pulse">
+                                      <Check className="w-2 h-2" /> APERTO
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-[13px] font-bold tracking-tight mb-0.5 truncate pr-8">
+                                {est.clientName} - {est.config?.area}mq
+                              </div>
+                              <div className="text-[10px] font-bold opacity-50">
+                                {formatCurrency(est.total[0])} - {formatCurrency(est.total[1])}
+                              </div>
+                            </button>
+                            
+                            {/* Persistent Action Bar (WhatsApp Style) */}
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); togglePin(est.id, !!est.pinned); }}
+                                 className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${est.pinned ? 'bg-brand-accent text-white' : 'bg-white/5 hover:bg-white/20 text-white/30 hover:text-white'}`}
+                                 title="Pin"
+                               >
+                                 <Pin className={`w-3 h-3 ${est.pinned ? 'rotate-0' : 'rotate-45'}`} />
+                               </button>
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); deleteEstimate(est.id); }}
+                                 className="w-7 h-7 rounded-full bg-white/5 hover:bg-red-500/20 hover:text-red-500 text-white/30 flex items-center justify-center transition-all"
+                                 title="Elimina"
+                               >
+                                 <Trash2 className="w-3 h-3" />
+                               </button>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[8px] font-bold opacity-30 uppercase tracking-[0.1em]">{dateObj.toLocaleDateString()} {dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                        </div>
-                        <div className="text-sm font-bold tracking-tight mb-1 group-hover:text-brand-accent transition-colors truncate">
-                          Stima dell'area: {est.config?.area}mq
-                        </div>
-                        <div className="text-[10px] font-bold opacity-60">
-                          {formatCurrency(est.total[0])} - {formatCurrency(est.total[1])}
-                        </div>
-                      </button>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               ));
             })()
@@ -1639,18 +1768,30 @@ export default function App() {
                   Registra nell'archivio cloud
                 </p>
               </div>
-              <button 
-                onClick={saveEstimate}
-                disabled={isSaving || !clientName}
-                className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all ${
-                  clientName 
-                    ? 'bg-brand-dark text-white shadow-lg hover:scale-[1.02] active:scale-95' 
-                    : 'bg-black/5 text-brand-dark/20 cursor-not-allowed border border-black/5'
-                }`}
-              >
-                {isSaving ? <CheckCircle2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                {isSaving ? 'In corso...' : 'Salva Ora'}
-              </button>
+              <div className="w-full space-y-2">
+                <button 
+                  onClick={saveEstimate}
+                  disabled={isSaving || !clientName}
+                  className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all ${
+                    clientName 
+                      ? 'bg-brand-dark text-white shadow-lg hover:scale-[1.02] active:scale-95' 
+                      : 'bg-black/5 text-brand-dark/20 cursor-not-allowed border border-black/5'
+                  }`}
+                >
+                  {isSaving ? <CheckCircle2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  {isSaving ? 'In corso...' : (currentProjectID ? 'Aggiorna Progetto' : 'Salva Ora')}
+                </button>
+                
+                {currentProjectID && (
+                  <button 
+                    onClick={() => { setCurrentProjectID(null); saveEstimate(); }}
+                    disabled={isSaving || !clientName}
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl font-black uppercase tracking-widest text-[8px] transition-all text-brand-dark/40 border border-black/5 hover:bg-black/5"
+                  >
+                    Salva come Nuovo (Duplica)
+                  </button>
+                )}
+              </div>
               {!clientName && <p className="text-[8px] text-brand-accent font-bold uppercase tracking-widest">Inserisci nome cliente per salvare</p>}
             </div>
           </div>
