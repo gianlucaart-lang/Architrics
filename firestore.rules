@@ -26,8 +26,8 @@ service cloud.firestore {
         && isOwner(incoming().userId) // Prevent changing owner
         && isValidEstimate(incoming())
         && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'precision'])
-          || incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'precision', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'precision', 'isPinned'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['clientName', 'config', 'total', 'items', 'precision', 'isPinned', 'updatedAt'])
         );
         
       allow delete: if isOwner(existing().userId);
@@ -41,7 +41,8 @@ service cloud.firestore {
         && data.items is list
         && data.config is map
         && data.userId == request.auth.uid
-        && data.precision in ['preliminary', 'developed', 'executive'];
+        && data.precision in ['preliminary', 'developed', 'executive']
+        && ( !('isPinned' in data) || data.isPinned is bool );
     }
   }
 }

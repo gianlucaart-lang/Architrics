@@ -25,7 +25,10 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  FolderOpen
+  FolderOpen,
+  Folder,
+  FileText,
+  Volume2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { initializeApp } from 'firebase/app';
@@ -108,43 +111,129 @@ const PROPERTY_STATUS = [
 ];
 
 const FINISH_LEVELS = [
-  { id: 'posaOnly', name: 'Solo Posa', desc: 'Forniture escluse (pavimenti, sanitari, etc). Solo manodopera.', mult: 0.55 },
-  { id: 'base', name: 'Finiture Base', desc: 'Soluzioni standard, capitolato economico.', mult: 0.76 },
-  { id: 'medium', name: 'Finiture Medie', desc: 'Marchi primari, materiali di design standard.', mult: 1.0 },
-  { id: 'high', name: 'Finiture Alte', desc: 'Rivestimenti pregiati, custom design, brand luxury.', mult: 1.38 },
+  { id: 'low', name: 'Finiture Base', desc: 'Soluzioni standard, capitolato economico.' },
+  { id: 'mid', name: 'Finiture Medie', desc: 'Marchi primari, materiali di design standard.' },
+  { id: 'high', name: 'Finiture Alte', desc: 'Rivestimenti pregiati, custom design, brand luxury.' },
+  { id: 'posaOnly', name: 'Solo Posa', desc: 'Calcolo esclusivo della manodopera professionale (escluse forniture).' },
 ];
 
-// Bathrooms Data
-const BATH_VOICE_PERC = {
-  impianti: [0.35, 0.38],
-  rivestimenti: [0.30, 0.32],
-  sanitari: [0.20, 0.22],
-  vascaDoccia: [0.08, 0.10],
-  boxDoccia: [0.10, 0.14],
-  riscPav: [0.12, 0.18],
-  vmc: [0.05, 0.08],
-  cartongesso: [0.06, 0.09]
+const ROOMS_COMPLEXITY = (rooms: number) => {
+  if (rooms <= 3) return 0.90;
+  if (rooms <= 5) return 1.00;
+  if (rooms <= 8) return 1.12;
+  return 1.20;
 };
 
-const BATH_BASE_COSTS = {
-  small: [2800, 5500],
-  medium: [4000, 8500],
-  large: [6500, 14000]
+const HEIGHT_MULT = (h: number) => {
+  if (h <= 2.70) return 1.00;
+  if (h <= 3.00) return 1.08;
+  if (h <= 3.50) return 1.18;
+  return 1.28;
+};
+
+const FLOOR_MULT = (floor: number, hasLift: boolean) => {
+  if (floor === 0) return 1.00;
+  if (hasLift) {
+    if (floor <= 3) return 1.04;
+    if (floor <= 6) return 1.08;
+    return 1.12;
+  } else {
+    if (floor === 1) return 1.06;
+    if (floor === 2) return 1.10;
+    if (floor === 3) return 1.15;
+    if (floor === 4) return 1.20;
+    return 1.28;
+  }
+};
+
+const SANITARY_LABOR = [380, 720];
+const SANITARY_SUPPLY = {
+  low: [400, 900],
+  mid: [900, 2200],
+  high: [2200, 6000],
+};
+const VASCA_DOCCIA_LABOR = [650, 1200];
+const VASCA_DOCCIA_SUPPLY = {
+  low: [300, 700],
+  mid: [700, 1800],
+  high: [1800, 5000],
+};
+const HYDRAULIC_LABOR = [120, 220]; // €/mq
+const LAUNDRY_LABOR = [400, 750];
+const LAUNDRY_SUPPLY = {
+  low: [150, 350],
+  mid: [350, 700],
+  high: [700, 1800],
+};
+
+const NEW_BATHROOM_EXTRAS_LABOR = {
+  wc: [280, 480],
+  bidet: [200, 380],
+  doccia: [450, 900],
+  lavanderia: [300, 600],
+  areazione: [300, 600],
+};
+
+const NEW_BATHROOM_EXTRAS_SUPPLY = {
+  wc: { low: [150, 250], mid: [300, 600], high: [700, 2000] },
+  bidet: { low: [100, 200], mid: [200, 450], high: [500, 1500] },
+  doccia: { low: [300, 600], mid: [600, 1400], high: [1500, 5000] },
+  lavanderia: { low: [200, 400], mid: [400, 800], high: [800, 2000] },
+  areazione: { low: [200, 350], mid: [350, 600], high: [600, 1200] },
+};
+
+const FLOOR_COSTS = {
+  parquet: {
+    posa: [45, 80],
+    supply: {
+      low: [40, 80],
+      mid: [80, 180],
+      high: [180, 400],
+    }
+  },
+  gres: {
+    posa: [30, 55],
+    supply: {
+      low: [20, 50],
+      mid: [50, 120],
+      high: [120, 300],
+    }
+  },
+  spc: {
+    posa: [20, 40],
+    supply: {
+      low: [15, 35],
+      mid: [35, 80],
+      high: [80, 180],
+    }
+  },
+};
+
+const THERMAL_REMOVAL = {
+  working: [300, 600],
+  revise: [500, 900],
+  demolish: [800, 1800],
+};
+
+const BOILER_SUPPLY = {
+  low: [1200, 2200],
+  mid: [2200, 4000],
+  high: [4000, 8000],
 };
 
 // --- TYPES ---
 
 interface BathroomExisting {
   id: string;
-  size: 'small' | 'medium' | 'large';
-  features: string[];
-  laundry: 'none' | 'mini' | 'locale';
+  size: number; // in mq
+  type: 'complete' | 'finishOnly'; // Intervention type requested
+  tubToShower: boolean;
+  laundry: boolean;
 }
 
 interface NewBathroom {
   id: string;
-  features: string[];
-  laundry: 'none' | 'mini' | 'locale';
+  extras: string[]; // wc, bidet, etc.
 }
 
 // --- UTILS ---
@@ -161,21 +250,36 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
 
+  const [authError, setAuthError] = useState<string | null>(null);
+
   useEffect(() => {
-    signInAnonymously(auth).catch(console.error);
+    signInAnonymously(auth).catch((error) => {
+      if (error.code === 'auth/admin-restricted-operation') {
+        const msg = "L'accesso anonimo è disabilitato nel Console Firebase. Abilitalo in Authentication > Sign-in method.";
+        setAuthError(msg);
+        // Silenziamo l'errore in console se è quello previsto di restrizione admin
+        console.warn("Firebase Auth Restricted: Cloud Sync disabled. Falling back to local storage.");
+      } else {
+        console.error("Firebase Auth Error:", error);
+        setAuthError(error.message);
+      }
+    });
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (u) loadSavedEstimates(u.uid);
+      loadSavedEstimates(u?.uid);
     });
     return unsubscribe;
   }, []);
 
   // 1. CONTESTO
   const [clientName, setClientName] = useState('');
-  const [precision, setPrecision] = useState<'preliminary' | 'developed' | 'executive'>('preliminary');
   const [region, setRegion] = useState(REGIONS[0].id);
   const [propType, setPropType] = useState(PROPERTY_TYPES[0].id);
   const [area, setArea] = useState<number>(85);
+  const [rooms, setRooms] = useState<number>(4);
+  const [height, setHeight] = useState<number>(2.70);
+  const [floor, setFloor] = useState<number>(0);
+  const [hasLift, setHasLift] = useState(false);
   const [year, setYear] = useState(CONSTRUCTION_YEARS[1].id);
   const [siteSetup, setSiteSetup] = useState<'min' | 'std' | 'high'>('std');
 
@@ -189,24 +293,34 @@ export default function App() {
   const [newBaths, setNewBaths] = useState<NewBathroom[]>([]);
 
   // 5. ALTRI INTERVENTI
-  const [flooring, setFlooring] = useState<'none' | 'partial' | 'total'>('none');
+  const [floorPct, setFloorPct] = useState(0);
+  const [floorType, setFloorType] = useState<'parquet' | 'gres' | 'spc'>('gres');
   const [screed, setScreed] = useState(false);
   const [windows, setWindows] = useState({ small: 0, medium: 0, large: 0 });
+  
   const [electric, setElectric] = useState<'none' | 'fix' | 'new'>('none');
   const [electricPoints, setElectricPoints] = useState<number>(50);
   const [electricLamps, setElectricLamps] = useState(false);
-  const [audioSystem, setAudioSystem] = useState<'none' | 'base' | 'multi'>('none');
-  const [hydraulic, setHydraulic] = useState<'none' | 'fix' | 'new'>('none');
-  const [thermal, setThermal] = useState<'none' | 'boiler' | 'distrib'>('none');
-  const [thermalDist, setThermalDist] = useState<'radiators' | 'underfloor' | 'fancoil' | 'air' | 'split'>('radiators');
-  const [thermalNew, setThermalNew] = useState(false);
+  const [plumbing, setPlumbing] = useState<'none' | 'fix' | 'new'>('none');
+  
+  const [thermalState, setThermalState] = useState<'none' | 'radiators' | 'fancoil' | 'underfloor'>('none');
+  const [thermalCondition, setThermalCondition] = useState<'working' | 'revise' | 'demolish'>('working');
+  const [thermalAction, setThermalAction] = useState<'none' | 'boiler' | 'new'>('none');
+  const [thermalTerminal, setThermalTerminal] = useState<'radiators' | 'underfloor' | 'fancoil' | 'pc' | 'split'>('radiators');
+  const [thermalSplitCount, setThermalSplitCount] = useState(0);
+
+  const [acType, setAcType] = useState<'none' | 'split' | 'ducted'>('none');
+  const [acUnits, setAcUnits] = useState(0);
+
   const [kitchen, setKitchen] = useState(false);
-  const [masonry, setMasonry] = useState<'none' | 'light' | 'heavy'>('none');
-  const [painting, setPainting] = useState(false);
-  const [ceilings, setCeilings] = useState<'none' | 'partial' | 'total'>('none');
-  const [insulation, setInsulation] = useState<'none' | 'partial' | 'total'>('none');
+  const [masonryPct, setMasonryPct] = useState(0);
+  const [paintingPct, setPaintingPct] = useState(0);
+  const [ceilingsPct, setCeilingsPct] = useState(0);
+  const [insulationPct, setInsulationPct] = useState(0);
+  const [insulationType, setInsulationType] = useState<'thermal' | 'acoustic'>('thermal');
   const [balconies, setBalconies] = useState(false);
   const [automation, setAutomation] = useState<'none' | 'base' | 'smart'>('none');
+  const [audioSystem, setAudioSystem] = useState<'none' | 'base' | 'multi'>('none');
   const [accessibility, setAccessibility] = useState(false);
 
   // 6. AVANZATE
@@ -218,6 +332,7 @@ export default function App() {
 
   // 7. FINITURE
   const [finish, setFinish] = useState(FINISH_LEVELS[2].id);
+  const [includeContingency, setIncludeContingency] = useState(false);
 
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -228,323 +343,323 @@ export default function App() {
     const typeMult = PROPERTY_TYPES.find(t => t.id === propType)?.mult || 1;
     const yearMult = CONSTRUCTION_YEARS.find(y => y.id === year)?.mult || 1;
     const statusMult = PROPERTY_STATUS.find(s => s.id === status)?.mult || 1;
-    const finishMult = FINISH_LEVELS.find(f => f.id === finish)?.mult || 1;
+    const finishMult = FINISH_LEVELS.find(f => f.id === finish)?.id || 'mid';
 
-    const baseMult = geoMult * typeMult * finishMult * statusMult * yearMult;
-    const bathMult = geoMult * typeMult * statusMult * yearMult; // Bathrooms are all-in, excluding finish mult as per user request
+    const rComp = ROOMS_COMPLEXITY(rooms);
+    const hMult = HEIGHT_MULT(height);
+    const fMult = FLOOR_MULT(floor, hasLift);
+
+    // Multiplier for labor/posa
+    const physicalMult = statusMult * yearMult * rComp * hMult * fMult;
     const advancedMult = geoMult;
+
+    const applyGeo = (bMin: number, bMax: number, g: number): [number, number] => {
+      const bMid = (bMin + bMax) / 2;
+      const rMid = bMid * g;
+      const spread = 0.15; // User requested fixed +/- 15%
+      return [rMid * (1 - spread), rMid * (1 + spread)];
+    };
 
     let min = 0;
     let max = 0;
-    const breakdown: { name: string; range: [number, number] }[] = [];
+    interface BreakdownItem {
+      name: string;
+      range: [number, number];
+      posa?: [number, number];
+      supply?: [number, number];
+    }
+    const breakdown: BreakdownItem[] = [];
+
+    const addBreakdown = (name: string, pMin: number, pMax: number, sMin: number = 0, sMax: number = 0) => {
+      const adjustedPosa = applyGeo(pMin, pMax, geoMult);
+      const finalSupply: [number, number] = [sMin, sMax];
+      
+      const totalR: [number, number] = [adjustedPosa[0] + finalSupply[0], adjustedPosa[1] + finalSupply[1]];
+      min += totalR[0];
+      max += totalR[1];
+      breakdown.push({ name, range: totalR, posa: adjustedPosa, supply: sMin > 0 ? finalSupply : undefined });
+    };
+
+    const addAdvanced = (name: string, pMin: number, pMax: number) => {
+      const adjusted = applyGeo(pMin, pMax, geoMult);
+      min += adjusted[0]; max += adjusted[1];
+      breakdown.push({ name, range: adjusted, posa: adjusted });
+    };
 
     // Cantierizzazione
-    let sMin = 0, sMax = 0;
-    if (siteSetup === 'min') { sMin = 1500; sMax = 3500; }
-    else if (siteSetup === 'std') { sMin = 3500; sMax = 7500; }
-    else { sMin = 8000; sMax = 18000; }
-    const setupR: [number, number] = [sMin * geoMult, sMax * geoMult];
-    min += setupR[0];
-    max += setupR[1];
-    breakdown.push({ name: 'Base Cantierizzazione / Logistica', range: setupR });
+    const siteCosts: any = { min: [1500, 3500], std: [3500, 7500], high: [7500, 15000] };
+    const sc = siteCosts[siteSetup];
+    addBreakdown('Cantierizzazione e Logistica', sc[0] * physicalMult, sc[1] * physicalMult);
 
     // Bagni Esistenti
     existingBaths.forEach((b, i) => {
-      let bMin = 0;
-      let bMax = 0;
-      const baseRange = BATH_BASE_COSTS[b.size];
-      
-      // Calculate based on features
-      b.features.forEach(f => {
-        const perc = BATH_VOICE_PERC[f as keyof typeof BATH_VOICE_PERC];
-        if (perc) {
-          bMin += baseRange[0] * perc[0];
-          bMax += baseRange[1] * perc[1];
-        }
-      });
+      const bathPhysicalMult = statusMult;
 
-      if (b.laundry === 'mini') { bMin += 800; bMax += 2200; }
-      else if (b.laundry === 'locale') { bMin += 2500; bMax += 6000; }
+      // Base rifacimento (completamente basato sul tipo d'intervento)
+      if (b.type === 'complete') {
+        const baseMin = b.size * 550 * bathPhysicalMult; // Higher base for systems+coatings+sanitaries
+        const baseMax = b.size * 950 * bathPhysicalMult;
+        addBreakdown(`Rifacimento Completo Bagno ${i+1}`, baseMin, baseMax);
+        
+        // Supply for complete usually includes sanitaries in this context
+        const sSupply: [number, number] = SANITARY_SUPPLY[finish as 'low'|'mid'|'high'] as [number, number];
+        if (finish !== 'posaOnly') addBreakdown(`Fornitura Sanitari Bagno ${i+1}`, 0, 0, sSupply[0], sSupply[1]);
+      } else {
+        const baseMin = b.size * 250 * bathPhysicalMult; // Lower base for only coatings+sanitaries
+        const baseMax = b.size * 450 * bathPhysicalMult;
+        addBreakdown(`Finiture (Solo Rivestimenti) Bagno ${i+1}`, baseMin, baseMax);
 
-      const finalR: [number, number] = [bMin * bathMult, bMax * bathMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Rifacimento Bagno ${i+1} (${b.size})`, range: finalR });
+        const sSupply: [number, number] = SANITARY_SUPPLY[finish as 'low'|'mid'|'high'] as [number, number];
+        if (finish !== 'posaOnly') addBreakdown(`Fornitura Sanitari Bagno ${i+1}`, 0, 0, sSupply[0], sSupply[1]);
+      }
+
+      if (b.tubToShower) {
+        const tLabor: [number, number] = [VASCA_DOCCIA_LABOR[0] * bathPhysicalMult, VASCA_DOCCIA_LABOR[1] * bathPhysicalMult];
+        const tSupply: [number, number] = VASCA_DOCCIA_SUPPLY[finish as 'low'|'mid'|'high'] as [number, number];
+        addBreakdown(`Trasformazione Vasca/Doccia Bagno ${i+1}`, tLabor[0], tLabor[1], finish === 'posaOnly' ? 0 : tSupply[0], finish === 'posaOnly' ? 0 : tSupply[1]);
+      }
+
+      if (b.laundry) {
+        const lLabor: [number, number] = [LAUNDRY_LABOR[0] * bathPhysicalMult, LAUNDRY_LABOR[1] * bathPhysicalMult];
+        const lSupply: [number, number] = LAUNDRY_SUPPLY[finish as 'low'|'mid'|'high'] as [number, number];
+        addBreakdown(`Aggiunta Mini-lavanderia Bagno ${i+1}`, lLabor[0], lLabor[1], finish === 'posaOnly' ? 0 : lSupply[0], finish === 'posaOnly' ? 0 : lSupply[1]);
+      }
     });
 
     // Bagni Nuovi
     newBaths.forEach((b, i) => {
-      let bMin = 3500; // Opere murarie base
-      let bMax = 7000;
+      let bPosaMin = 3200 * physicalMult; // Base muraria/idrica scaled to Lombardia ref
+      let bPosaMax = 6500 * physicalMult;
+      let bSupplyMin = 1500;
+      let bSupplyMax = 3000;
 
-      b.features.forEach(f => {
-        if (f === 'wc') { bMin += 400; bMax += 900; }
-        if (f === 'lavabo') { bMin += 350; bMax += 800; }
-        if (f === 'bidet') { bMin += 300; bMax += 700; }
-        if (f === 'doccia') { bMin += 600; bMax += 1400; }
-        if (f === 'vasca') { bMin += 800; bMax += 2000; }
-        if (f === 'box') { bMin += 1200; bMax += 3500; }
-        if (f === 'risc') { bMin += 900; bMax += 2400; }
-        if (f === 'vmc') { bMin += 400; bMax += 900; }
+      b.extras.forEach(e => {
+        const lp = NEW_BATHROOM_EXTRAS_LABOR[e as keyof typeof NEW_BATHROOM_EXTRAS_LABOR] || [0,0];
+        bPosaMin += lp[0] * physicalMult; bPosaMax += lp[1] * physicalMult;
+        const sp = NEW_BATHROOM_EXTRAS_SUPPLY[e as keyof typeof NEW_BATHROOM_EXTRAS_SUPPLY]?.[finish as 'low' | 'mid' | 'high'] || [0,0];
+        bSupplyMin += sp[0]; bSupplyMax += sp[1];
       });
 
-      if (b.laundry === 'mini') { bMin += 900; bMax += 2500; }
-      else if (b.laundry === 'locale') { bMin += 3000; bMax += 7000; }
-
-      const finalR: [number, number] = [bMin * bathMult, bMax * bathMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Nuovo Bagno ${i+1}`, range: finalR });
+      addBreakdown(`Nuovo Bagno ${i+1}`, bPosaMin, bPosaMax, bSupplyMin, bSupplyMax);
     });
 
     // Pavimenti
-    if (flooring !== 'none') {
-      const multArea = flooring === 'partial' ? 0.5 : 1;
-      let fMin = (area * multArea) * 35;
-      let fMax = (area * multArea) * 72;
+    if (floorPct > 0) {
+      const floorArea = (area * floorPct) / 100;
+      const costs = FLOOR_COSTS[floorType];
+      let pMin = costs.posa[0] * floorArea * physicalMult;
+      let pMax = costs.posa[1] * floorArea * physicalMult;
+
+      const sCosts = costs.supply[finish as 'low' | 'mid' | 'high'];
+      addBreakdown(`Pavimenti (${floorType}, ${floorPct}%)`, pMin, pMax, sCosts[0] * floorArea, sCosts[1] * floorArea);
+
       if (screed) {
-        fMin += (area * multArea) * 15;
-        fMax += (area * multArea) * 25;
+        const SCREED_RATE = [39, 64];
+        addBreakdown('Massetto (demolizione + smaltimento + posa)', SCREED_RATE[0] * floorArea, SCREED_RATE[1] * floorArea);
       }
-      const finalR: [number, number] = [fMin * baseMult, fMax * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Pavimentazione ${flooring === 'partial' ? 'parziale' : 'totale'}`, range: finalR });
     }
 
     // Infissi
     const wCount = windows.small + windows.medium + windows.large;
     if (wCount > 0) {
-      let wMin = (windows.small * 700) + (windows.medium * 1100) + (windows.large * 1800);
-      let wMax = (windows.small * 1100) + (windows.medium * 1800) + (windows.large * 3200);
+      let wPosaMin = ((windows.small * 150) + (windows.medium * 220) + (windows.large * 450)) * physicalMult;
+      let wPosaMax = ((windows.small * 250) + (windows.medium * 450) + (windows.large * 800)) * physicalMult;
       
-      const finalR: [number, number] = [wMin * baseMult, wMax * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Infissi (${wCount} unità divise per size)`, range: finalR });
+      let wSupplyMin = 0, wSupplyMax = 0;
+      const sMult = finish === 'low' ? 0.7 : finish === 'mid' ? 1.0 : 1.8;
+      wSupplyMin = ((windows.small * 500) + (windows.medium * 900) + (windows.large * 1500)) * sMult;
+      wSupplyMax = ((windows.small * 900) + (windows.medium * 1500) + (windows.large * 2800)) * sMult;
+
+      addBreakdown(`Infissi (${wCount} unità)`, wPosaMin, wPosaMax, wSupplyMin, wSupplyMax);
     }
 
     // Elettrico
     if (electric !== 'none') {
-      // Base cost for panel, certification, etc.
-      const baseRate = electric === 'fix' ? [800, 1800] : [1500, 3500];
+      let eMin = 0, eMax = 0;
+      if (electric === 'fix') { eMin = 800; eMax = 2200; }
+      else { eMin = electricPoints * 45; eMax = electricPoints * 75; }
       
-      // Points cost (approx 45-65 € per point)
-      let eMin = baseRate[0] + (electricPoints * 45);
-      let eMax = baseRate[1] + (electricPoints * 68);
-      
-      // Lamp installation (only labor, approx 30-55 € per unit)
-      if (electricLamps) {
-        const estUnits = Math.ceil(electricPoints * 0.4); // Estimated 40% of points are lamps
-        eMin += estUnits * 30;
-        eMax += estUnits * 55;
-      }
-
-      const finalR: [number, number] = [eMin * baseMult, eMax * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Impianto elettrico (${electricPoints} pt${electricLamps ? ' + montaggio' : ''})`, range: finalR });
+      if (electricLamps) { eMin += 500; eMax += 1500; }
+      addBreakdown(`Impianto elettrico (${electricPoints} pt)`, eMin * physicalMult, eMax * physicalMult);
     }
 
     // Idraulico
-    if (hydraulic !== 'none') {
-      const rate = hydraulic === 'fix' ? [12, 24] : [22, 48];
-      const finalR: [number, number] = [area * rate[0] * baseMult, area * rate[1] * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Impianto idraulico (${hydraulic === 'fix' ? 'adeguamento' : 'rifacimento'})`, range: finalR });
+    if (plumbing !== 'none') {
+      // Inferred points calculation
+      let inferredPoints = 0;
+      if (plumbing === 'new') {
+        // Redoing the whole system
+        // Every complete bathroom + new bathroom + kitchen
+        inferredPoints += existingBaths.filter(b => b.type === 'complete').length * 5;
+        inferredPoints += newBaths.length * 5;
+        if (kitchen) inferredPoints += 3;
+        
+        // Minimum points based on size if none calculated above but still marked as 'new'
+        if (inferredPoints === 0) inferredPoints = Math.max(5, Math.floor(area / 20));
+      } else {
+        // 'fix' (Adeguamento) - smaller intervention
+        inferredPoints = Math.max(3, Math.floor(area / 40));
+      }
+
+      const phMin = (area * 12) + (inferredPoints * 220);
+      const phMax = (area * 28) + (inferredPoints * 450);
+      addBreakdown(`Impianto Idrico (${plumbing === 'fix' ? 'Adeguamento' : 'Rifacimento'}, ~${inferredPoints} pt)`, phMin * physicalMult, phMax * physicalMult);
     }
 
     // Termico
-    if (thermal !== 'none') {
-      let tMin = 0;
-      let tMax = 0;
-      if (thermal === 'boiler') {
-        tMin = 2500; tMax = 6000;
+    if (thermalAction !== 'none') {
+      let tMin = 0, tMax = 0;
+      let tSMin = 0, tSMax = 0;
+
+      if (thermalAction === 'boiler') {
+        tMin = 400; tMax = 800;
+        const bs = BOILER_SUPPLY[finish as 'low' | 'mid' | 'high'];
+        tSMin = bs[0]; tSMax = bs[1];
       } else {
-        // Caldaia + Distribuzione
-        tMin = 2500; tMax = 6000;
-        const eMult = thermalNew ? 1.5 : 1.0; // Estimate for new vs integration
-        if (thermalDist === 'radiators') { tMin += area * 18 * eMult; tMax += area * 45 * eMult; }
-        else if (thermalDist === 'underfloor') { tMin += area * 35 * eMult; tMax += area * 80 * eMult; }
-        else if (thermalDist === 'fancoil') { tMin += area * 25 * eMult; tMax += area * 65 * eMult; }
-        else if (thermalDist === 'air') { tMin += 8000; tMax += 18000; }
-        else if (thermalDist === 'split') {
-          const units = Math.ceil(area / 20);
-          tMin += units * 800 * eMult; tMax += units * 2500 * eMult;
-        }
+        // Rifacimento
+        tMin = area * 35; tMax = area * 85;
+        tSMin = area * 25; tSMax = area * 60;
       }
-      const finalR: [number, number] = [tMin * baseMult, tMax * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Impianto termico (${thermalDist === 'radiators' ? 'radiatori' : thermalDist})`, range: finalR });
+      addBreakdown(`Impianto termico (${thermalAction})`, tMin * physicalMult, tMax * physicalMult, tSMin, tSMax);
     }
 
-    // Cucina
-    if (kitchen) {
-      const finalR: [number, number] = [7000 * baseMult, 22000 * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: 'Opere cucina + forniture', range: finalR });
+    // AC
+    if (acType !== 'none') {
+      let acMin = 0, acMax = 0;
+      let acSMin = 0, acSMax = 0;
+
+      if (acType === 'split') {
+        acMin = acUnits * 350;
+        acMax = acUnits * 800;
+        acSMin = acUnits * 600;
+        acSMax = acUnits * 1800;
+      } else {
+        // Canalizzato: basato sui mq totali dell'immobile
+        acMin = area * 45;
+        acMax = area * 95;
+        acSMin = area * 60;
+        acSMax = area * 140;
+      }
+      addBreakdown(`Climatizzazione (${acType})`, acMin * physicalMult, acMax * physicalMult, finish === 'posaOnly' ? 0 : acSMin, finish === 'posaOnly' ? 0 : acSMax);
     }
 
     // Murarie
-    if (masonry !== 'none') {
-      let mMin = 0, mMax = 0;
-      if (masonry === 'light') { mMin = 2500; mMax = 7000; }
-      else { mMin = area * 15; mMax = area * 42; }
-      const finalR: [number, number] = [mMin * baseMult, mMax * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Opere murarie (${masonry === 'light' ? 'leggere' : 'importanti'})`, range: finalR });
+    if (masonryPct > 0) {
+      // In base alla percentuale di "Intensità" (intesa come estensione/profondità delle opere murarie)
+      const intenseFactor = masonryPct / 100;
+      let mMin = area * 80 * intenseFactor;
+      let mMax = area * 180 * intenseFactor;
+      addBreakdown(`Opere murarie (${masonryPct}%)`, mMin * physicalMult, mMax * physicalMult);
     }
 
-    // Tinteggiatura
-    if (painting) {
-      const finalR: [number, number] = [area * 9 * baseMult, area * 20 * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: 'Tinteggiatura e intonaci', range: finalR });
+    // Altro
+    if (kitchen) {
+      const kSupply: any = { low: [4500, 8000], mid: [8000, 15000], high: [15000, 35000] };
+      addBreakdown('Opere e Fornitura Cucina', 1500 * physicalMult, 3500 * physicalMult, kSupply[finish as keyof typeof kSupply][0], kSupply[finish as keyof typeof kSupply][1]);
     }
-
-    // Controsoffitti
-    if (ceilings !== 'none') {
-      const mult = ceilings === 'partial' ? 0.4 : 1;
-      const finalR: [number, number] = [area * mult * 22 * baseMult, area * mult * 55 * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Controsoffitti (${ceilings === 'partial' ? 'parziali' : 'totali'})`, range: finalR });
-    }
-
-    // Isolamento
-    if (insulation !== 'none') {
-      const mult = insulation === 'partial' ? 0.4 : 1;
-      const finalR: [number, number] = [area * mult * 25 * baseMult, area * mult * 60 * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Isolamento termoacustico (${insulation === 'partial' ? 'parziale' : 'totale'})`, range: finalR });
-    }
-
-    // Balconi
+    if (paintingPct > 0) addBreakdown('Tinteggiatura', (area * paintingPct / 100) * 12 * physicalMult, (area * paintingPct / 100) * 25 * physicalMult);
+    if (ceilingsPct > 0) addBreakdown('Controsoffitti', (area * ceilingsPct / 100) * 35 * physicalMult, (area * ceilingsPct / 100) * 75 * physicalMult);
+    if (insulationPct > 0) addBreakdown('Isolamento', (area * insulationPct / 100) * 45 * physicalMult, (area * insulationPct / 100) * 95 * physicalMult);
     if (balconies) {
-      const bArea = area * 0.1;
-      const finalR: [number, number] = [bArea * 80 * baseMult, bArea * 200 * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: 'Balconi e terrazze (stima 10% sup.)', range: finalR });
+      const bSupply: any = { low: [1000, 2500], mid: [2500, 6000], high: [6000, 15000] };
+      addBreakdown('Balconi/Terrazzi', 1500 * physicalMult, 5000 * physicalMult, bSupply[finish as keyof typeof bSupply][0], bSupply[finish as keyof typeof bSupply][1]);
     }
-
-    // Domotica
     if (automation !== 'none') {
-      const finalR: [number, number] = [
-        (automation === 'base' ? 1800 : 6000) * baseMult,
-        (automation === 'base' ? 5000 : 20000) * baseMult
-      ];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Domotica / Allarme (${automation})`, range: finalR });
+      const aSupply: any = { low: [800, 2000], mid: [2000, 5000], high: [5000, 15000] };
+      addBreakdown('Domotica', 400 * physicalMult, 1200 * physicalMult, aSupply[finish as keyof typeof aSupply][0], aSupply[finish as keyof typeof aSupply][1]);
     }
-
-    // Barriere
-    if (accessibility) {
-      const finalR: [number, number] = [2500 * baseMult, 8000 * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: 'Abbattimento barriere architettoniche', range: finalR });
-    }
-
-    // Audio
     if (audioSystem !== 'none') {
-      const rate = audioSystem === 'base' ? [1200, 2800] : [3500, 8500];
-      const finalR: [number, number] = [rate[0] * baseMult, rate[1] * baseMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Predisposizione Audio (${audioSystem === 'base' ? 'Soggiorno' : 'Multi-room'})`, range: finalR });
+      const auSupply: any = { low: [300, 800], mid: [800, 2500], high: [2500, 8000] };
+      addBreakdown('Audio', 500 * physicalMult, 1500 * physicalMult, auSupply[finish as keyof typeof auSupply][0], auSupply[finish as keyof typeof auSupply][1]);
     }
+    if (accessibility) addBreakdown('Accessibilità', 2000 * physicalMult, 7000 * physicalMult);
 
-    // AVANZATE
     if (pv !== 'none') {
-      let rate = [0, 0];
-      if (pv === '3kw') rate = [6000, 10000];
-      else if (pv === '6kw') rate = [10000, 17000];
-      else rate = [16000, 28000];
-      const finalR: [number, number] = [rate[0] * advancedMult, rate[1] * advancedMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Fotovoltaico (${pv})`, range: finalR });
+      const costs: any = { '3kw': [5500, 8500], '6kw': [9000, 14000], '10kw': [15000, 25000] };
+      addAdvanced(`Fotovoltaico (${pv})`, costs[pv][0], costs[pv][1]);
     }
+    if (stairs !== 'none') addAdvanced('Scala interna', stairs === 'finish' ? 2500 : 12000, stairs === 'finish' ? 7000 : 35000);
+    if (cellar) addAdvanced('Cantina/Garage', 2500, 8000);
+    if (roof !== 'none') addAdvanced('Tetto', 8000, 45000);
 
-    if (stairs !== 'none') {
-      let rate = stairs === 'finish' ? [3000, 8000] : [12000, 35000];
-      const finalR: [number, number] = [rate[0] * advancedMult, rate[1] * advancedMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Scala interna (${stairs === 'finish' ? 'restauro' : 'nuova'})`, range: finalR });
-    }
+    // Dynamic Risk Factor (Complessità Intervento)
+    let riskFactor = 1.0;
+    if (status === 'critical') riskFactor += 0.25;
+    if (status === 'poor') riskFactor += 0.15;
+    if (year === 'ante1960') riskFactor += 0.10;
+    if (masonryPct > 25) riskFactor += 0.12;
+    if (roof !== 'none') riskFactor += 0.20;
+    if (stairs === 'structure') riskFactor += 0.10;
+    if (thermalAction === 'new') riskFactor += 0.08;
+    
+    // Contigency increment (additive only) scaled by riskFactor
+    const baseInc = [0.08, 0.20]; 
+    const riskInc = [baseInc[0] * riskFactor, baseInc[1] * riskFactor];
+    
+    // Cap al margine
+    const maxCap = 0.30;
+    const finalRiskInc = [
+      Math.min(riskInc[0], maxCap * 0.6), 
+      Math.min(riskInc[1], maxCap)
+    ];
+    
+    const contMult = [1 + finalRiskInc[0], 1 + finalRiskInc[1]];
 
-    if (cellar) {
-      const finalR: [number, number] = [area * 0.05 * 40 * advancedMult, area * 0.05 * 100 * advancedMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: 'Cantina / Garage (stima 5% sup.)', range: finalR });
-    }
-
-    if (roof !== 'none') {
-      const rArea = area * 0.1;
-      let rate = roof === 'seal' ? [60, 130] : [180, 380];
-      const finalR: [number, number] = [rArea * rate[0] * advancedMult, rArea * rate[1] * advancedMult];
-      min += finalR[0];
-      max += finalR[1];
-      breakdown.push({ name: `Copertura / Tetto (${roof === 'seal' ? 'manutenzione' : 'rifacimento'})`, range: finalR });
-    }
-
-    // Contingency based on precision
-    // preliminary: 8-15%, developed: 5-10%, executive: 2-5%
-    let pMin = 1.08, pMax = 1.15;
-    if (precision === 'developed') { pMin = 1.05; pMax = 1.10; }
-    else if (precision === 'executive') { pMin = 1.02; pMax = 1.05; }
-
-    const finalMin = min * pMin;
-    const finalMax = max * pMax;
-
-    return { total: [finalMin, finalMax], items: breakdown };
+    return { 
+      baseTotal: [min, max], 
+      contingencyMult: contMult,
+      riskFactor: (riskFactor - 1) * 100, // Percentage of extra complexity
+      items: breakdown 
+    };
   }, [
-    region, propType, area, year, status, existingBaths, newBaths, 
-    flooring, screed, windows, electric, electricPoints, electricLamps, audioSystem, hydraulic, thermal, thermalDist, 
-    thermalNew, kitchen, masonry, painting, ceilings, insulation, 
-    balconies, automation, accessibility, pv, stairs, cellar, roof, finish,
-    siteSetup, precision
+    region, propType, area, rooms, height, floor, hasLift, year, status,
+    existingBaths, newBaths, floorPct, floorType, screed, windows, electric, electricPoints, electricLamps, plumbing,
+    thermalAction, thermalTerminal, kitchen, masonryPct, paintingPct, ceilingsPct, insulationPct,
+    balconies, automation, audioSystem, accessibility, pv, stairs, cellar, roof, finish,
+    acType, acUnits, includeContingency, siteSetup
   ]);
 
   const saveEstimate = async () => {
-    if (!user || !clientName) {
-      if (!clientName) alert("Inserisci il nome del cliente prima di salvare.");
+    if (!clientName) {
+      alert("Inserisci il nome del cliente prima di salvare.");
       return;
     }
     setIsSaving(true);
-    try {
-      const config = {
-        region, propType, area, year, status, siteSetup,
-        existingBaths, newBaths, flooring, screed, windows,
-        electric, electricPoints, electricLamps, audioSystem,
-        hydraulic, thermal, thermalDist, thermalNew, kitchen,
-        masonry, painting, ceilings, insulation, balconies,
-        automation, accessibility, pv, stairs, cellar, roof,
-        finish, precision
-      };
+    
+    const config = {
+      region, propType, area, rooms, height, floor, hasLift, year, status, siteSetup,
+      existingBaths, newBaths, floorPct, floorType, screed, windows,
+      electric, electricPoints, electricLamps, plumbing,
+      thermalAction, thermalTerminal, kitchen,
+      masonryPct, paintingPct, ceilingsPct, insulationPct, balconies,
+      automation, audioSystem, accessibility, pv, stairs, cellar, roof,
+      finish, acType, acUnits, includeContingency
+    };
 
-      await addDoc(collection(db, 'estimates'), {
-        clientName,
-        date: new Date().toISOString(),
-        total: totals.total,
-        items: totals.items,
-        config,
-        precision,
-        userId: user.uid
-      });
-      setLastSaved(new Date().toLocaleTimeString());
-      await loadSavedEstimates(user.uid);
-      alert("Stima salvata correttamente nell'archivio.");
+    const estimateData = {
+      clientName,
+      date: new Date().toISOString(),
+      total: totals.baseTotal,
+      items: totals.items,
+      config,
+      userId: user?.uid || 'local-user'
+    };
+
+    try {
+      if (user) {
+        await addDoc(collection(db, 'estimates'), estimateData);
+        setLastSaved(new Date().toLocaleTimeString());
+        await loadSavedEstimates(user.uid);
+        alert("Stima salvata correttamente in Cloud.");
+      } else {
+        // Fallback Local Storage
+        const localData = JSON.parse(localStorage.getItem('local_estimates') || '[]');
+        localData.push({ id: `local-${Date.now()}`, ...estimateData });
+        localStorage.setItem('local_estimates', JSON.stringify(localData));
+        setLastSaved(new Date().toLocaleTimeString());
+        await loadSavedEstimates();
+        alert("Stima salvata localmente (Sincronizzazione Cloud disattivata).");
+      }
     } catch (e) {
       console.error(e);
       alert("Errore durante il salvataggio: " + (e as Error).message);
@@ -553,48 +668,65 @@ export default function App() {
     }
   };
 
-  const loadSavedEstimates = async (uid: string) => {
+  const loadSavedEstimates = async (uid?: string) => {
     try {
-      const q = query(collection(db, 'estimates'), where('userId', '==', uid));
-      const snap = await getDocs(q);
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      // Ordinamento manuale per evitare necessità di indici compositi Firestore
-      items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      setSavedEstimates(items);
+      let cloudItems: any[] = [];
+      if (uid) {
+        const q = query(collection(db, 'estimates'), where('userId', '==', uid));
+        const snap = await getDocs(q);
+        cloudItems = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      }
+
+      const localItems = JSON.parse(localStorage.getItem('local_estimates') || '[]');
+      const allItems = [...cloudItems, ...localItems];
+      
+      // Ordinamento per data decrescente
+      allItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setSavedEstimates(allItems);
     } catch (e) { 
       console.error(e); 
-      alert("Errore caricamento archivio: " + (e as Error).message);
+      // Non blocchiamo l'utente se il cloud fallisce, mostriamo almeno i locali
+      const localItems = JSON.parse(localStorage.getItem('local_estimates') || '[]');
+      setSavedEstimates(localItems);
     }
   };
 
   const applyEstimate = (est: any) => {
     const c = est.config;
     setClientName(est.clientName);
-    setPrecision(est.precision || 'preliminary');
-    setRegion(c.region); setPropType(c.propType); setArea(c.area); setYear(c.year);
-    setSiteSetup(c.siteSetup); setStatus(c.status); setExistingBaths(c.existingBaths);
-    setNewBaths(c.newBaths); setFlooring(c.flooring); setScreed(c.screed);
+    setRegion(c.region); setPropType(c.propType); setArea(c.area); 
+    setRooms(c.rooms || 4); setHeight(c.height || 2.70); setFloor(c.floor || 0); setHasLift(c.hasLift || false);
+      setExistingBaths((c.existingBaths || []).map((b: any) => ({
+        ...b,
+        type: b.type || 'complete',
+        tubToShower: b.tubToShower ?? false,
+        laundry: b.laundry ?? false
+      })));
+    setNewBaths(c.newBaths); setFloorPct(c.floorPct || 0); setFloorType(c.floorType || 'gres'); setScreed(c.screed);
     setWindows(c.windows); setElectric(c.electric); setElectricPoints(c.electricPoints);
     setElectricLamps(c.electricLamps); setAudioSystem(c.audioSystem);
-    setHydraulic(c.hydraulic); setThermal(c.thermal); setThermalDist(c.thermalDist);
-    setThermalNew(c.thermalNew); setKitchen(c.kitchen); setMasonry(c.masonry);
-    setPainting(c.painting); setCeilings(c.ceilings); setInsulation(c.insulation);
+    setPlumbing(c.plumbing || 'none');
+    setThermalAction(c.thermalAction || 'none'); setThermalTerminal(c.thermalTerminal || 'radiators');
+    setAcType(c.acType || 'none'); setAcUnits(c.acUnits || 0);
+    setKitchen(c.kitchen); setMasonryPct(c.masonryPct || 0);
+    setPaintingPct(c.paintingPct || 0); setCeilingsPct(c.ceilingsPct || 0); setInsulationPct(c.insulationPct || 0);
     setBalconies(c.balconies); setAutomation(c.automation); setAccessibility(c.accessibility);
     setPv(c.pv); setStairs(c.stairs); setCellar(c.cellar); setRoof(c.roof);
-    setFinish(c.finish);
+    setFinish(c.finish); setIncludeContingency(c.includeContingency || false);
   };
 
   const resetProject = () => {
     setClientName('');
-    setPrecision('preliminary');
     setRegion(REGIONS[0].id); setPropType(PROPERTY_TYPES[0].id); setArea(85);
-    setYear(CONSTRUCTION_YEARS[1].id); setSiteSetup('std'); setStatus(PROPERTY_STATUS[0].id);
-    setExistingBaths([]); setNewBaths([]); setFlooring('none'); setScreed(false);
+    setRooms(4); setHeight(2.70); setFloor(0); setHasLift(false);
+    setYear(CONSTRUCTION_YEARS[1].id); setStatus(PROPERTY_STATUS[0].id); setSiteSetup('std');
+    setExistingBaths([]); setNewBaths([]); setFloorPct(0); setFloorType('gres'); setScreed(false);
     setWindows({ small: 0, medium: 0, large: 0 }); setElectric('none'); setElectricPoints(50);
-    setElectricLamps(false); setAudioSystem('none'); setHydraulic('none');
-    setThermal('none'); setThermalDist('radiators'); setThermalNew(false);
-    setKitchen(false); setMasonry('none'); setPainting(false); setCeilings('none');
-    setInsulation('none'); setBalconies(false); setAutomation('none'); setAccessibility(false);
+    setElectricLamps(false); setAudioSystem('none'); setPlumbing('none');
+    setThermalAction('none'); setThermalTerminal('radiators');
+    setAcType('none'); setAcUnits(0);
+    setKitchen(false); setMasonryPct(0); setPaintingPct(0); setCeilingsPct(0);
+    setInsulationPct(0); setBalconies(false); setAutomation('none'); setAccessibility(false);
     setPv('none'); setStairs('none'); setCellar(false); setRoof('none'); setFinish(FINISH_LEVELS[2].id);
     setLastSaved(null);
   };
@@ -608,38 +740,25 @@ export default function App() {
   const addExistingBath = () => {
     setExistingBaths([...existingBaths, { 
       id: Math.random().toString(36).substr(2, 9), 
-      size: 'medium', 
-      features: ['impianti', 'rivestimenti', 'sanitari'],
-      laundry: 'none'
+      size: 5, 
+      type: 'complete',
+      tubToShower: false,
+      laundry: false
     }]);
   }
 
   const addNewBath = () => {
     setNewBaths([...newBaths, { 
       id: Math.random().toString(36).substr(2, 9), 
-      features: ['wc', 'lavabo', 'doccia'],
-      laundry: 'none'
+      extras: ['wc', 'lavabo', 'doccia']
     }]);
   }
 
-  const toggleBathFeature = (id: string, feature: string, type: 'existing' | 'new') => {
-    if (type === 'existing') {
-      setExistingBaths(existingBaths.map(b => 
-        b.id === id ? { ...b, features: b.features.includes(feature) ? b.features.filter(f => f !== feature) : [...b.features, feature] } : b
-      ));
-    } else {
-      setNewBaths(newBaths.map(b => 
-        b.id === id ? { ...b, features: b.features.includes(feature) ? b.features.filter(f => f !== feature) : [...b.features, feature] } : b
-      ));
-    }
-  }
-
-  const updateBathLaundry = (id: string, laundry: 'none' | 'mini' | 'locale', type: 'existing' | 'new') => {
-    if (type === 'existing') {
-      setExistingBaths(existingBaths.map(b => b.id === id ? { ...b, laundry } : b));
-    } else {
-      setNewBaths(newBaths.map(b => b.id === id ? { ...b, laundry } : b));
-    }
+  const toggleBathExtra = (id: string, extra: string) => {
+    setNewBaths(newBaths.map(b => b.id === id ? { 
+      ...b, 
+      extras: b.extras.includes(extra) ? b.extras.filter(e => e !== extra) : [...b.extras, extra] 
+    } : b));
   }
 
   const removeBath = (id: string, type: 'existing' | 'new') => {
@@ -734,6 +853,21 @@ export default function App() {
         
         <div className="h-px w-full bg-black/5 my-10"></div>
         
+        {authError && (
+          <div className="mb-10 p-5 bg-brand-accent/5 border border-brand-accent/20 rounded-3xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-1000">
+            <div className="w-10 h-10 rounded-full bg-brand-accent/10 flex items-center justify-center text-brand-accent shrink-0">
+               <XCircle className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-accent">Database in Modalità Locale</span>
+              <p className="text-[11px] font-medium text-brand-dark/60 leading-tight">
+                {authError} 
+                <span className="block mt-1 opacity-40 font-bold italic">L'app continuerà a salvare le tue stime nella memoria locale del browser.</span>
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* CLIENT INFO STRIP */}
         <div className="mb-12 grid grid-cols-1 md:grid-cols-12 gap-8 glass p-8 rounded-[32px] shadow-apple border border-white/50">
           <div className="md:col-span-8 flex flex-col gap-3">
@@ -793,32 +927,51 @@ export default function App() {
           {savedEstimates.length === 0 ? (
             <div className="py-20 text-center text-white/20 font-bold uppercase tracking-widest text-xs">Storage is Empty</div>
           ) : (
-            savedEstimates.map(est => {
-              const dateObj = new Date(est.date);
-              return (
-                <button 
-                  key={est.id}
-                  onClick={() => {
-                    applyEstimate(est);
-                    const drawer = document.getElementById('estimate-drawer');
-                    if (drawer) drawer.classList.add('translate-x-full');
-                  }}
-                  className="w-full text-left p-6 bg-white/5 hover:bg-white/10 border border-white/10 rounded-3xl transition-all group"
-                >
-                  <div className="flex justify-between items-center mb-3">
-                    <span className="px-2 py-0.5 bg-brand-accent text-[8px] font-black uppercase tracking-widest rounded">{est.precision || 'Prelim'}</span>
-                    <div className="flex flex-col items-end">
-                      <span className="text-[9px] font-bold opacity-30 uppercase tracking-[0.1em]">{dateObj.toLocaleDateString()}</span>
-                      <span className="text-[8px] font-medium opacity-20 uppercase tracking-[0.1em]">{dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                    </div>
+            (() => {
+              // Group estimates by client name
+              const groups: Record<string, any[]> = {};
+              savedEstimates.forEach(est => {
+                const name = est.clientName || 'Senza Nome';
+                if (!groups[name]) groups[name] = [];
+                groups[name].push(est);
+              });
+
+              return Object.entries(groups).map(([client, estimates]) => (
+                <div key={client} className="space-y-2">
+                  <div className="flex items-center gap-2 px-2 py-1 opacity-40">
+                    <Folder className="w-3 h-3" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">{client}</span>
                   </div>
-                  <div className="text-xl font-bold tracking-tight mb-3 group-hover:text-brand-accent transition-colors">{est.clientName}</div>
-                  <div className="text-sm font-bold opacity-60">
-                    {formatCurrency(est.total[0])} - {formatCurrency(est.total[1])}
-                  </div>
-                </button>
-              );
-            })
+                  {estimates.map(est => {
+                    const dateObj = new Date(est.date);
+                    return (
+                      <button 
+                        key={est.id}
+                        onClick={() => {
+                          applyEstimate(est);
+                          const drawer = document.getElementById('estimate-drawer');
+                          if (drawer) drawer.classList.add('translate-x-full');
+                        }}
+                        className="w-full text-left p-5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition-all group relative pl-10"
+                      >
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 opacity-20 group-hover:opacity-100 transition-opacity">
+                          <FileText className="w-4 h-4 text-brand-accent" />
+                        </div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[8px] font-bold opacity-30 uppercase tracking-[0.1em]">{dateObj.toLocaleDateString()} {dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        </div>
+                        <div className="text-sm font-bold tracking-tight mb-1 group-hover:text-brand-accent transition-colors truncate">
+                          Stima dell'area: {est.config?.area}mq
+                        </div>
+                        <div className="text-[10px] font-bold opacity-60">
+                          {formatCurrency(est.total[0])} - {formatCurrency(est.total[1])}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ));
+            })()
           )}
         </div>
       </div>
@@ -850,26 +1003,24 @@ export default function App() {
                   onChange={setPropType} 
                   options={PROPERTY_TYPES} 
                 />
-                <ToggleItem 
-                  label="Grado Precisione" 
-                  value={precision} 
-                  onChange={setPrecision} 
-                  options={[
-                    {id:'preliminary', name:'Prelim.'}, 
-                    {id:'developed', name:'Svilupp.'}, 
-                    {id:'executive', name:'Esecut.'}
-                  ]} 
-                />
               </div>
 
               <div className="space-y-1">
                 <label className="text-xs uppercase font-bold tracking-wider text-brand-dark/50">Superficie Totale (mq)</label>
                 <div className="relative">
-                  <input 
-                    type="number" 
-                    value={area} 
-                    onChange={(e) => setArea(Number(e.target.value))}
+                  <input
+                    type="number"
+                    min="1"
+                    value={area === 0 ? '' : area}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '') { setArea(0); return; }
+                      const parsed = parseInt(val, 10);
+                      if (!isNaN(parsed) && parsed >= 0) setArea(parsed);
+                    }}
+                    onFocus={(e) => { if (area === 0) e.target.value = ''; }}
                     className="w-full text-lg font-bold"
+                    placeholder="es. 85"
                   />
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-brand-dark/30 uppercase tracking-widest">mq</div>
                 </div>
@@ -886,6 +1037,60 @@ export default function App() {
                 </select>
               </div>
 
+              {/* NEW PARAMETERS */}
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold tracking-wider text-brand-dark/50">Numero locali (esclusi bagni)</label>
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="20"
+                  value={rooms} 
+                  onChange={(e) => setRooms(Number(e.target.value))}
+                  placeholder="es. 4"
+                  className="w-full text-lg font-bold"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs uppercase font-bold tracking-wider text-brand-dark/50">Altezza Locali Interni</label>
+                  <span className="text-xs font-bold text-brand-accent">{height.toFixed(2)} m</span>
+                </div>
+                <input 
+                  type="range"
+                  min="2.20"
+                  max="4.50"
+                  step="0.10"
+                  value={height}
+                  onChange={(e) => setHeight(Number(e.target.value))}
+                  className="w-full h-1.5 bg-black/5 rounded-lg appearance-none cursor-pointer accent-brand-accent"
+                />
+              </div>
+
+              <div className="md:col-span-2 grid grid-cols-2 gap-4 pt-4 border-t border-black/5">
+                <div className="space-y-1">
+                  <label className="text-xs uppercase font-bold tracking-wider text-brand-dark/50">Piano dell'immobile</label>
+                  <select 
+                    value={floor} 
+                    onChange={(e) => setFloor(Number(e.target.value))}
+                    className="w-full"
+                  >
+                    <option value={0}>Piano Terra</option>
+                    {[1,2,3,4,5,6,7,8,9,10].map(f => <option key={f} value={f}>{f}° Piano</option>)}
+                  </select>
+                </div>
+                {floor > 0 && (
+                  <div className="flex flex-col justify-end">
+                    <button
+                      onClick={() => setHasLift(!hasLift)}
+                      className={`flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-xs font-bold uppercase tracking-wider ${hasLift ? 'bg-brand-accent border-brand-accent text-white' : 'bg-transparent border-black/5 text-brand-dark/40 hover:bg-black/5'}`}
+                    >
+                      {hasLift ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4 opacity-30" />}
+                      Ascensore Presente
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="space-y-4 md:col-span-2 mt-2 pt-4 border-t border-black/5">
                 <ToggleItem 
                   label="Logistica Cantiere" 
@@ -897,9 +1102,6 @@ export default function App() {
                     {id: 'high', name: 'Complessa'}
                   ]} 
                 />
-                <p className="text-[10px] text-brand-dark/40 italic">
-                  * Trattamento spazzature, protezioni, logistica piani, permessi occupazione suolo.
-                </p>
               </div>
             </div>
           </section>
@@ -923,7 +1125,7 @@ export default function App() {
 
           {/* 3. BAGNI ESISTENTI */}
           <section>
-            <SectionHeader title="Bagni Esistenti" icon={Bath} step={3} />
+            <SectionHeader title="Bagni Esistenti (Rifacimento)" icon={Bath} step={3} />
             <div className="space-y-6">
               <AnimatePresence>
                 {existingBaths.map((b, idx) => (
@@ -936,9 +1138,9 @@ export default function App() {
                   >
                     <div className="flex justify-between items-start mb-8">
                       <div className="flex flex-col">
-                        <span className="text-[10px] uppercase font-black tracking-widest text-brand-accent/60 mb-1">Configurazione</span>
+                        <span className="text-[10px] uppercase font-black tracking-widest text-brand-accent/60 mb-1">Dati Vano Estistente</span>
                         <h4 className="flex items-center gap-2 text-xl font-bold text-brand-dark tracking-tight">
-                          Bagno Esistente #{idx + 1}
+                          Bagno #{idx + 1}
                         </h4>
                       </div>
                       <button onClick={() => removeBath(b.id, 'existing')} className="w-8 h-8 rounded-full bg-black/5 flex items-center justify-center text-brand-dark/20 hover:bg-brand-accent hover:text-white transition-all">
@@ -948,53 +1150,59 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                       <div className="space-y-6">
-                        <ToggleItem 
-                          label="Dimensioni" 
-                          value={b.size} 
-                          onChange={(val: any) => setExistingBaths(existingBaths.map(x => x.id === b.id ? {...x, size: val} : x))}
-                          options={[{id: 'small', name: '<4 mq'}, {id: 'medium', name: '4-8 mq'}, {id: 'large', name: '>8 mq'}]}
-                        />
-                        <div className="space-y-3">
-                          <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Voci di Capitolato</span>
+                        <div className="space-y-2">
+                          <label className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Superficie (mq)</label>
+                          <div className="flex items-center gap-4">
+                            <input 
+                              type="range" 
+                              min="0" 
+                              max="15" 
+                              step="0.5"
+                              value={b.size} 
+                              onChange={(e) => setExistingBaths(existingBaths.map(x => x.id === b.id ? {...x, size: Number(e.target.value)} : x))}
+                              className="grow h-1 bg-black/5 rounded-lg appearance-none cursor-pointer accent-brand-accent"
+                            />
+                            <span className="text-sm font-black text-brand-dark w-16 text-right">{b.size} mq</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Tipo Intervento</span>
                           <div className="grid grid-cols-1 gap-2">
-                            {Object.keys(BATH_VOICE_PERC).map(feat => (
-                              <label key={feat} className="flex items-center justify-between p-4 bg-white/40 border border-black/5 rounded-2xl cursor-pointer hover:border-brand-accent transition-all group">
-                                <span className="text-[11px] font-bold uppercase tracking-tight text-brand-dark/60 group-hover:text-brand-dark">
-                                  {feat === 'impianti' && 'Impianti Tecnologici'}
-                                  {feat === 'rivestimenti' && 'Superfici & Finiture'}
-                                  {feat === 'sanitari' && 'Sanitari & Rubinetteria'}
-                                  {feat === 'vascaDoccia' && 'Ricollocazione Vasca/Doccia'}
-                                  {feat === 'boxDoccia' && 'Chiusure Cristallo'}
-                                  {feat === 'riscPav' && 'Clima Radiante'}
-                                  {feat === 'vmc' && 'Ventilazione Forzata'}
-                                  {feat === 'cartongesso' && 'Lighting Design'}
-                                </span>
+                             {[
+                               { id: 'complete', label: 'Rifacimento Completo', desc: 'Impianti + Rivestimenti + Sanitari' },
+                               { id: 'finishOnly', label: 'Solo Finiture', desc: 'Rivestimenti + Sanitari (impianti esistenti)' }
+                             ].map((t) => (
+                               <button 
+                                 key={t.id}
+                                 onClick={() => setExistingBaths(existingBaths.map(x => x.id === b.id ? {...x, type: t.id as any} : x))}
+                                 className={`flex flex-col p-4 rounded-xl border transition-all text-left ${b.type === t.id ? 'bg-brand-dark text-white border-brand-dark' : 'bg-white border-black/5 hover:border-brand-accent'}`}
+                               >
+                                 <span className="text-xs font-bold">{t.label}</span>
+                                 <span className={`text-[9px] uppercase tracking-wider opacity-60 ${b.type === t.id ? 'text-white/60' : 'text-brand-dark/40'}`}>{t.desc}</span>
+                               </button>
+                             ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 pt-4 border-t border-black/5">
+                          <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Opzioni Extra</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {[
+                              { id: 'tubToShower', label: 'Trasformazione Vasca/Doccia' },
+                              { id: 'laundry', label: 'Aggiunta Lavanderia' }
+                            ].map((int) => (
+                              <label key={int.id} className="flex items-center gap-3 p-3 bg-white/40 border border-black/5 rounded-xl cursor-pointer hover:border-brand-accent transition-all group">
                                 <input 
                                   type="checkbox" 
-                                  checked={b.features.includes(feat)}
-                                  onChange={() => toggleBathFeature(b.id, feat, 'existing')}
-                                  className="w-5 h-5 rounded-md accent-brand-accent"
+                                  checked={!!(b as any)[int.id]}
+                                  onChange={() => setExistingBaths(existingBaths.map(x => x.id === b.id ? {...x, [int.id]: !((x as any)[int.id])} : x))}
+                                  className="w-3.5 h-3.5 rounded accent-brand-accent"
                                 />
+                                <span className="text-[9px] font-bold uppercase tracking-tight text-brand-dark/60 group-hover:text-brand-dark">{int.label}</span>
                               </label>
                             ))}
                           </div>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-4">
-                        <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Integrazione Lavanderia</span>
-                        <div className="flex flex-col gap-2">
-                          {['none', 'mini', 'locale'].map(l => (
-                            <button 
-                              key={l}
-                              onClick={() => updateBathLaundry(b.id, l as any, 'existing')}
-                              className={`p-4 rounded-2xl text-left transition-all text-[11px] font-bold uppercase tracking-widest border-2 ${b.laundry === l ? 'border-brand-accent bg-white shadow-sm text-brand-dark' : 'border-transparent bg-black/5 text-brand-dark/30 hover:bg-black/10'}`}
-                            >
-                              {l === 'none' && 'Escludi'}
-                              {l === 'mini' && 'Integrata (+800-2.2k€)'}
-                              {l === 'locale' && 'Locale Dedicato (+2.5k-6k€)'}
-                            </button>
-                          ))}
                         </div>
                       </div>
                     </div>
@@ -1006,14 +1214,14 @@ export default function App() {
                 className="w-full p-8 border-2 border-dashed border-black/10 rounded-[32px] flex items-center justify-center gap-3 text-brand-dark/20 hover:text-brand-accent hover:border-brand-accent hover:bg-white transition-all font-black uppercase tracking-[0.3em] text-xs"
               >
                 <Plus className="w-5 h-5" />
-                Registra Nuovo vano
+                Registra Rifacimento Bagno
               </button>
             </div>
           </section>
 
           {/* 4. BAGNI NUOVI */}
           <section>
-            <SectionHeader title="Sviluppo Nuovi Vani" icon={Plus} step={4} />
+            <SectionHeader title="Nuovi Bagni (Ex-Novo)" icon={Plus} step={4} />
             <div className="space-y-6">
               <AnimatePresence>
                 {newBaths.map((b, idx) => (
@@ -1036,56 +1244,20 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                      <div className="space-y-3">
-                        <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Dotazioni di Progetto</span>
-                        <div className="grid grid-cols-1 gap-2">
-                          {[
-                            {id: 'wc', n: 'Suspended WC', c: '400-900'},
-                            {id: 'lavabo', n: 'Design Basin', c: '350-800'},
-                            {id: 'bidet', n: 'Suspended Bidet', c: '300-700'},
-                            {id: 'doccia', n: 'Fixed Shower', c: '600-1400'},
-                            {id: 'vasca', n: 'Free-standing Tub', c: '800-2000'},
-                            {id: 'box', n: 'Crystal Glass Encl.', c: '1200-3500'},
-                            {id: 'risc', n: 'Clima Solutions', c: '900-2400'},
-                            {id: 'vmc', n: 'Smart Air VMC', c: '400-900'},
-                          ].map(f => (
-                            <label key={f.id} className="flex items-center justify-between p-4 bg-white/50 border border-black/5 rounded-2xl cursor-pointer hover:border-brand-accent transition-all group">
-                              <div className="flex items-center gap-3">
-                                <input 
-                                  type="checkbox" 
-                                  checked={b.features.includes(f.id)}
-                                  onChange={() => toggleBathFeature(b.id, f.id, 'new')}
-                                  className="w-5 h-5 rounded-md accent-brand-accent"
-                                />
-                                <span className="text-[11px] font-bold uppercase tracking-tight text-brand-dark/60 group-hover:text-brand-dark">{f.n}</span>
-                              </div>
-                              <span className="text-[9px] font-black text-brand-dark/20">+{f.c}€</span>
-                            </label>
-                          ))}
-                        </div>
-                        <p className="mt-4 text-[9px] text-brand-dark/30 font-bold uppercase tracking-widest text-center">* Technical foundations included in estimate</p>
-                      </div>
-                      
-                      <div className="space-y-4">
-                        <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Laundry Integration</span>
-                        <div className="flex flex-col gap-2">
-                          {['none', 'mini', 'locale'].map(l => (
-                            <button 
-                              key={l}
-                              onClick={() => updateBathLaundry(b.id, l as any, 'new')}
-                              className={`p-5 rounded-2xl text-left transition-all border-2 ${b.laundry === l ? 'border-brand-accent bg-white shadow-apple text-brand-dark' : 'border-transparent bg-black/5 text-brand-dark/20 hover:bg-black/10'}`}
-                            >
-                              <div className="flex flex-col">
-                                <span className="text-[11px] font-black uppercase tracking-widest">
-                                  {l === 'none' && 'Excluded'}
-                                  {l === 'mini' && 'Internal (+900-2.5k)'}
-                                  {l === 'locale' && 'Dedicated Suite (+3k-7k)'}
-                                </span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
+                    <div className="space-y-3">
+                      <span className="text-[10px] uppercase tracking-[0.2em] font-black text-brand-dark/30">Dotazioni</span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {['wc', 'bidet', 'lavabo', 'doccia', 'vasca', 'laundry'].map(extra => (
+                          <label key={extra} className="flex items-center justify-between p-4 bg-white/40 border border-black/5 rounded-2xl cursor-pointer hover:border-brand-accent transition-all group">
+                            <span className="text-[9px] font-bold uppercase tracking-tight text-brand-dark/60 group-hover:text-brand-dark">{extra}</span>
+                            <input 
+                              type="checkbox" 
+                              checked={b.extras.includes(extra)}
+                              onChange={() => toggleBathExtra(b.id, extra)}
+                              className="w-4 h-4 rounded accent-brand-accent"
+                            />
+                          </label>
+                        ))}
                       </div>
                     </div>
                   </motion.div>
@@ -1114,18 +1286,18 @@ export default function App() {
                     <Layers className="w-4 h-4 text-brand-accent" />
                     <span className="text-xs font-bold uppercase tracking-[0.2em]">Pavimenti</span>
                   </div>
-                  <ToggleItem 
-                    label="Estensione" 
-                    value={flooring} 
-                    onChange={setFlooring} 
-                    options={[{id:'none', name:'No'}, {id:'partial', name:'50%'}, {id:'total', name:'100%'}]} 
-                  />
-                  {flooring !== 'none' && (
-                    <div className="flex items-center gap-3 mt-2 px-3 py-2 bg-white rounded border border-brand-dark/5">
-                      <input type="checkbox" checked={screed} onChange={() => setScreed(!screed)} className="accent-brand-accent" />
-                      <span className="text-[10px] uppercase font-bold text-brand-dark/60">Rifacimento Massetto (+15-25€/mq)</span>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-bold text-brand-dark/40">Estensione (%)</label>
+                    <input type="range" min="0" max="100" step="10" value={floorPct} onChange={(e) => setFloorPct(Number(e.target.value))} className="w-full h-1 bg-black/5 rounded-lg appearance-none cursor-pointer accent-brand-accent" />
+                    <div className="flex justify-between text-[9px] font-bold opacity-30 uppercase tracking-tighter">
+                      <span>0%</span> <span>{floorPct}%</span> <span>100%</span>
                     </div>
-                  )}
+                  </div>
+                  <ToggleItem label="Tipologia" value={floorType} onChange={setFloorType} options={[{id:'gres', name:'Gres'}, {id:'parquet', name:'Parquet'}, {id:'spc', name:'SPC'}]} />
+                  <div className="flex items-center gap-3 mt-2 px-3 py-2 bg-white rounded border border-brand-dark/5">
+                    <input type="checkbox" checked={screed} onChange={() => setScreed(!screed)} className="accent-brand-accent" />
+                    <span className="text-[10px] uppercase font-bold text-brand-dark/60">Rifacimento Massetto (+18-35€/mq)</span>
+                  </div>
                 </div>
 
                 {/* Infissi */}
@@ -1136,9 +1308,9 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-1 gap-2 p-3 bg-white/50 border border-black/5 rounded-xl">
                     {[
-                      {id:'small', n:'Piccolo', d: 'Finestra/Finestrina'},
-                      {id:'medium', n:'Medio', d: 'Portafinestra standard'},
-                      {id:'large', n:'Grande', d: 'Scorrevoli / Grandi vetrate'}
+                      {id:'small', n:'Piccolo', d: 'Finestra standard'},
+                      {id:'medium', n:'Medio', d: 'Portafinestra'},
+                      {id:'large', n:'Grande', d: 'Scorrevoli / Grandi'}
                     ].map(sz => (
                       <div key={sz.id} className="flex justify-between items-center py-1">
                         <div className="flex flex-col">
@@ -1146,20 +1318,9 @@ export default function App() {
                           <span className="text-[9px] text-brand-dark/40 uppercase leading-none">{sz.d}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => setWindows({...windows, [sz.id]: Math.max(0, windows[sz.id as keyof typeof windows] - 1)})}
-                            className="w-6 h-6 flex items-center justify-center bg-black/5 rounded hover:bg-black/10 transition-colors"
-                          >-</button>
-                          <input 
-                            type="number"
-                            value={windows[sz.id as keyof typeof windows]}
-                            onChange={(e) => setWindows({...windows, [sz.id]: Math.max(0, Number(e.target.value))})}
-                            className="w-10 text-center bg-transparent border-none font-bold text-xs p-0 focus:ring-0"
-                          />
-                          <button 
-                            onClick={() => setWindows({...windows, [sz.id]: windows[sz.id as keyof typeof windows] + 1})}
-                            className="w-6 h-6 flex items-center justify-center bg-black/5 rounded hover:bg-black/10 transition-colors"
-                          >+</button>
+                          <button onClick={() => setWindows({...windows, [sz.id]: Math.max(0, windows[sz.id as keyof typeof windows] - 1)})} className="w-6 h-6 flex items-center justify-center bg-black/5 rounded">-</button>
+                          <span className="w-6 text-center text-xs font-bold">{windows[sz.id as keyof typeof windows]}</span>
+                          <button onClick={() => setWindows({...windows, [sz.id]: windows[sz.id as keyof typeof windows] + 1})} className="w-6 h-6 flex items-center justify-center bg-black/5 rounded">+</button>
                         </div>
                       </div>
                     ))}
@@ -1172,40 +1333,61 @@ export default function App() {
                     <Zap className="w-4 h-4 text-brand-accent" />
                     <span className="text-xs font-bold uppercase tracking-[0.2em]">Impianto Elettrico</span>
                   </div>
-                  <ToggleItem 
-                    label="Tipo Intervento" 
-                    value={electric} 
-                    onChange={setElectric} 
-                    options={[{id:'none', name:'No'}, {id:'fix', name:'Adeguamento'}, {id:'new', name:'Rifacimento'}]} 
-                  />
-                  {electric !== 'none' && (
-                    <motion.div 
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      className="space-y-4 pt-4 border-t border-black/5"
-                    >
-                      <div className="flex justify-between items-center bg-white/50 p-3 rounded-lg border border-black/5">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-brand-dark/60">Punti Luce Totali</label>
-                        <div className="relative w-16">
-                          <input 
-                            type="number" 
-                            value={electricPoints} 
-                            onChange={(e) => setElectricPoints(Number(e.target.value))}
-                            className="w-full text-center font-bold text-sm bg-transparent border-b border-black/10 focus:border-brand-accent transition-colors py-1 outline-none appearance-none"
-                          />
-                        </div>
-                      </div>
-                      <label className="flex items-center gap-3 p-3 bg-white/50 border border-black/5 rounded cursor-pointer hover:border-brand-accent/20 transition-colors">
-                        <input 
-                          type="checkbox" 
-                          checked={electricLamps}
-                          onChange={() => setElectricLamps(!electricLamps)}
-                          className="w-3.5 h-3.5 accent-brand-accent"
-                        />
-                        <span className="text-[10px] font-bold uppercase text-brand-dark/70">Montaggio Corpi Illuminanti (solo manodopera)</span>
+                  <ToggleItem label="Tipo" value={electric} onChange={setElectric} options={[{id:'none', name:'No'}, {id:'fix', name:'Adeguamento'}, {id:'new', name:'Nuovo'}]} />
+                  {electric === 'new' && (
+                    <div className="space-y-2 pt-2">
+                      <div className="flex justify-between text-[10px] font-bold uppercase opacity-40"><span>Punti (Luce/Prese/Accensioni)</span> <span>{electricPoints} pts</span></div>
+                      <input type="range" min="30" max="150" step="10" value={electricPoints} onChange={(e) => setElectricPoints(Number(e.target.value))} className="w-full h-1 accent-brand-accent" />
+                      <label className="flex items-center gap-2 pt-2 cursor-pointer">
+                        <input type="checkbox" checked={electricLamps} onChange={() => setElectricLamps(!electricLamps)} className="accent-brand-accent" />
+                        <span className="text-[10px] font-bold uppercase opacity-60">Installazione Lampadari</span>
                       </label>
-                    </motion.div>
+                    </div>
                   )}
+                </div>
+
+                {/* Termico */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Droplets className="w-4 h-4 text-brand-accent" />
+                    <span className="text-xs font-bold uppercase tracking-[0.2em]">Riscaldamento</span>
+                  </div>
+                  <ToggleItem label="Intervento" value={thermalAction} onChange={setThermalAction} options={[{id:'none', name:'No'}, {id:'boiler', name:'Caldaia'}, {id:'total', name:'Rifacimento'}]} />
+                  {thermalAction === 'total' && (
+                    <ToggleItem label="Terminali" value={thermalTerminal} onChange={setThermalTerminal} options={[{id:'radiators', name:'Radiatori'}, {id:'underfloor', name:'Radiante'}]} />
+                  )}
+                </div>
+
+                {/* AC */}
+                <div className="space-y-4">
+                   <div className="flex items-center gap-2 mb-2">
+                    <Wind className="w-4 h-4 text-brand-accent" />
+                    <span className="text-xs font-bold uppercase tracking-[0.2em]">Climatizzazione</span>
+                  </div>
+                  <ToggleItem label="Tipo" value={acType} onChange={setAcType} options={[{id:'none', name:'No'}, {id:'split', name:'Split'}, {id:'ducted', name:'Canalizzato'}]} />
+                  {acType === 'split' && (
+                    <div className="flex justify-between items-center bg-white/50 p-3 rounded-lg border border-black/5 mt-2">
+                      <label className="text-[10px] font-bold uppercase opacity-60">Unità Interne</label>
+                      <input type="number" min="1" value={acUnits} onChange={(e) => setAcUnits(Number(e.target.value))} className="w-12 text-center font-bold text-xs" />
+                    </div>
+                  )}
+                  {acType === 'ducted' && (
+                    <div className="p-3 bg-brand-accent/5 rounded-lg border border-brand-accent/10 mt-2">
+                      <span className="text-[9px] font-bold uppercase text-brand-accent">Calcolato su superficie immobile ({area}mq)</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Murarie */}
+                <div className="space-y-4">
+                   <div className="flex items-center gap-2 mb-2">
+                    <Info className="w-4 h-4 text-brand-accent" />
+                    <span className="text-xs font-bold uppercase tracking-[0.2em]">Opere Murarie</span>
+                  </div>
+                  <div className="space-y-2 mt-2">
+                      <div className="flex justify-between text-[9px] font-bold uppercase opacity-30"><span>Intensità Interventi</span> <span>{masonryPct}%</span></div>
+                      <input type="range" min="0" max="100" step="5" value={masonryPct} onChange={(e) => setMasonryPct(Number(e.target.value))} className="w-full h-1 bg-black/5 rounded-lg appearance-none cursor-pointer accent-brand-accent" />
+                  </div>
                 </div>
 
                 {/* Idraulico */}
@@ -1215,114 +1397,74 @@ export default function App() {
                     <span className="text-xs font-bold uppercase tracking-[0.2em]">Impianto Idraulico</span>
                   </div>
                   <ToggleItem 
-                    label="Tipo Intervento" 
-                    value={hydraulic} 
-                    onChange={setHydraulic} 
-                    options={[{id:'none', name:'No'}, {id:'fix', name:'Adeguamento'}, {id:'new', name:'Rifacimento'}]} 
+                    label="Intervento" 
+                    value={plumbing} 
+                    onChange={setPlumbing} 
+                    options={[{id:'none', name:'No'}, {id:'fix', name:'Adeguamento'}, {id:'new', name:'Nuovo'}]} 
                   />
+                  {plumbing !== 'none' && (
+                    <div className="p-3 bg-brand-accent/5 rounded-lg border border-brand-accent/10 mt-2">
+                       <p className="text-[9px] text-brand-dark/40 italic">* Punti calcolati automaticamente in base a mq ({area}mq) e rifacimento bagni/cucina.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Audio */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <Wind className="w-4 h-4 text-brand-accent" />
+                    <Volume2 className="w-4 h-4 text-brand-accent" />
                     <span className="text-xs font-bold uppercase tracking-[0.2em]">Impianto Audio</span>
                   </div>
                   <ToggleItem 
-                    label="Predisposizione" 
+                    label="Diffusione Sonora" 
                     value={audioSystem} 
                     onChange={setAudioSystem} 
                     options={[{id:'none', name:'No'}, {id:'base', name:'Singola'}, {id:'multi', name:'Multiroom'}]} 
                   />
-                  <p className="text-[9px] text-brand-dark/40 uppercase italic">Solo passaggio cavi e scatole (no diffusori)</p>
                 </div>
               </div>
 
-              {/* Termico - Focus */}
-              <div className="p-8 bg-white border border-black/5 rounded-2xl shadow-sm space-y-6">
-                <div className="flex items-center gap-3">
-                  <Thermometer className="w-5 h-5 text-brand-accent opacity-60" />
-                  <h3 className="text-lg font-serif lowercase grow border-b border-black/5 pb-1 capitalize">Impianto Termico</h3>
+              {/* Quick Options Box */}
+              <div className="p-8 bg-brand-dark/5 rounded-[40px] border border-black/5">
+                <span className="text-[10px] font-black uppercase tracking-[0.3em] opacity-30 mb-6 block text-center">Interventi Complementari</span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    {id:'kitchen', n:'Cucina', state: kitchen, set: setKitchen},
+                    {id:'balconies', n:'Balconi', state: balconies, set: setBalconies},
+                    {id:'accessibility', n:'Accessibilità', state: accessibility, set: setAccessibility},
+                    {id:'cellar', n:'Cantina', state: cellar, set: setCellar},
+                  ].map(o => (
+                    <button key={o.id} onClick={() => o.set(!o.state)} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${o.state ? 'bg-brand-dark text-white border-brand-dark' : 'bg-white border-transparent text-brand-dark/40 hover:border-black/5'}`}>
+                      {o.n}
+                    </button>
+                  ))}
                 </div>
-                
-                <ToggleItem 
-                  label="Configurazione" 
-                  value={thermal} 
-                  onChange={setThermal} 
-                  options={[
-                    {id:'none', name:'Nessuno'}, 
-                    {id:'boiler', name:'Solo Caldaia'}, 
-                    {id:'distrib', name:'Completo'}
-                  ]} 
-                />
 
-                {thermal === 'distrib' && (
-                  <motion.div 
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    className="space-y-6 pt-6 border-t border-brand-dark/5"
-                  >
-                    <div className="space-y-4">
-                      <span className="text-[10px] uppercase font-bold text-brand-dark/40">Tipologia Terminali</span>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                        {[
-                          {id:'radiators', n:'Radiatori'},
-                          {id:'underfloor', n:'Radiante'},
-                          {id:'fancoil', n:'Fancoil'},
-                          {id:'air', n:'Pompa Calore'},
-                          {id:'split', n:'Split AC'},
-                        ].map(t => (
-                          <button 
-                            key={t.id}
-                            onClick={() => setThermalDist(t.id as any)}
-                            className={`p-3 text-[10px] font-bold uppercase border rounded transition-all ${thermalDist === t.id ? 'bg-brand-dark text-white' : 'bg-white hover:border-brand-accent/50'}`}
-                          >
-                            {t.n}
-                          </button>
-                        ))}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-10 pt-10 border-t border-black/5">
+                   <div className="space-y-2">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-[9px] font-bold uppercase opacity-40">Tinteggiatura</span>
+                        <span className="text-[10px] font-black text-brand-dark">{paintingPct}%</span>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3 px-4 py-3 bg-brand-cream/50 rounded border border-dashed border-brand-dark/20">
-                      <input type="checkbox" checked={thermalNew} onChange={() => setThermalNew(!thermalNew)} className="accent-brand-accent" />
-                      <span className="text-xs font-medium text-brand-dark/70">Interamente Nuovo (Senza tubazioni esistenti)</span>
-                    </div>
-                  </motion.div>
-                )}
+                      <input type="range" min="0" max="100" value={paintingPct} onChange={(e) => setPaintingPct(Number(e.target.value))} className="w-full accent-brand-accent" />
+                   </div>
+                   <div className="space-y-2">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-[9px] font-bold uppercase opacity-40">Controsoffitti</span>
+                        <span className="text-[10px] font-black text-brand-dark">{ceilingsPct}%</span>
+                      </div>
+                      <input type="range" min="0" max="100" value={ceilingsPct} onChange={(e) => setCeilingsPct(Number(e.target.value))} className="w-full accent-brand-accent" />
+                   </div>
+                   <div className="space-y-2">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-[9px] font-bold uppercase opacity-40">Isolamento</span>
+                        <span className="text-[10px] font-black text-brand-dark">{insulationPct}%</span>
+                      </div>
+                      <ToggleItem label="Tipo Isolamento" value={insulationType} onChange={setInsulationType as any} options={[{id:'thermal', name:'Termico'}, {id:'acoustic', name:'Acustico'}]} />
+                      <input type="range" min="0" max="100" value={insulationPct} onChange={(e) => setInsulationPct(Number(e.target.value))} className="w-full accent-brand-accent mt-2" />
+                   </div>
+                </div>
               </div>
-
-              {/* Opzioni Quick Toggle */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {[
-                  { id: 'kitchen', n: 'Cucina (Opere + Forn.)', icon: Utensils, state: kitchen, set: setKitchen },
-                  { id: 'painting', n: 'Tinteggiatura / Intonaci', icon: Paintbrush, state: painting, set: setPainting },
-                  { id: 'balconies', n: 'Balconi / Terrazze', icon: Square, state: balconies, set: setBalconies },
-                  { id: 'accessibility', n: 'Abbattimento Barriere', icon: Info, state: accessibility, set: setAccessibility },
-                ].map(item => (
-                  <button 
-                    key={item.id}
-                    onClick={() => item.set(!item.state)}
-                    className={`flex items-center gap-3 p-4 border rounded-lg font-bold text-[10px] uppercase tracking-widest transition-all ${
-                      item.state ? 'bg-brand-accent text-white border-brand-accent' : 'bg-white border-brand-dark/10 text-brand-dark/60 hover:border-brand-accent/40'
-                    }`}
-                  >
-                    <item.icon className={`w-4 h-4 ${item.state ? 'text-white' : 'text-brand-accent'}`} />
-                    {item.n}
-                  </button>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <ToggleItem label="Opere Murarie" value={masonry} onChange={setMasonry} options={[{id:'none', n:'No'}, {id:'light', n:'Leggere'}, {id:'heavy', n:'Importanti'}].map(o => ({id:o.id, name:o.n}))} />
-                <ToggleItem label="Controsoffitti" value={ceilings} onChange={setCeilings} options={[{id:'none', n:'No'}, {id:'partial', n:'40%'}, {id:'total', n:'100%'}].map(o => ({id:o.id, name:o.n}))} />
-                <ToggleItem label="Isolamento" value={insulation} onChange={setInsulation} options={[{id:'none', n:'No'}, {id:'partial', n:'40%'}, {id:'total', n:'100%'}].map(o => ({id:o.id, name:o.n}))} />
-              </div>
-
-              <ToggleItem 
-                label="Domotica / Sicurezza" 
-                value={automation} 
-                onChange={setAutomation} 
-                options={[{id:'none', name:'No'}, {id:'base', name:'Base'}, {id:'smart', name:'Smart Home'}]} 
-              />
             </div>
           </section>
 
@@ -1401,33 +1543,6 @@ export default function App() {
             )}
           </section>
 
-          {/* SAVE ACTION AT THE END */}
-          <section className="pt-12">
-            <div className="glass p-10 rounded-[40px] border border-white shadow-2xl flex flex-col items-center gap-6 text-center">
-              <div className="w-16 h-16 rounded-3xl bg-brand-accent/10 flex items-center justify-center text-brand-accent mb-2">
-                <Save className="w-8 h-8" />
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold tracking-tight mb-2">Concludi e Salva Progetto</h3>
-                <p className="text-sm text-brand-dark/40 max-w-sm mx-auto font-medium">
-                  Salva questa configurazione nell'archivio. Ogni salvataggio creerà una nuova versione datata per permetterti di vedere l'evoluzione della stima.
-                </p>
-              </div>
-              <button 
-                onClick={saveEstimate}
-                disabled={isSaving || !clientName}
-                className={`flex items-center gap-3 px-12 py-5 rounded-[24px] font-bold uppercase tracking-widest text-xs transition-all ${
-                  clientName 
-                    ? 'bg-brand-accent text-white shadow-xl shadow-brand-accent/30 hover:scale-[1.05] active:scale-95' 
-                    : 'bg-black/5 text-brand-dark/20 cursor-not-allowed border border-black/5'
-                }`}
-              >
-                {isSaving ? <CheckCircle2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                {isSaving ? 'Registrazione in corso...' : 'Salva nell\'Archivio'}
-              </button>
-              {!clientName && <p className="text-[10px] text-brand-accent font-bold uppercase tracking-widest">* Inserisci il nome del cliente all'inizio per salvare</p>}
-            </div>
-          </section>
         </div>
 
         {/* RESULTS PANEL (STICKY ON DESKTOP) */}
@@ -1440,38 +1555,68 @@ export default function App() {
                 </div>
                 <div className="text-[10px] font-bold text-white/30 uppercase tracking-[0.1em]">Rapporto di Stima</div>
               </div>
-              
-              <div className="text-4xl font-bold tracking-tighter mb-1 mt-4">
-                {formatCurrency(totals.total[0])} —
-              </div>
-              <div className="text-4xl font-bold tracking-tighter text-white/40 mb-8">
-                {formatCurrency(totals.total[1])}
-              </div>
 
-              <div className="h-px w-full bg-white/10 mb-8"></div>
+              {(() => {
+                const currentTotal = includeContingency 
+                  ? [totals.baseTotal[0] * totals.contingencyMult[0], totals.baseTotal[1] * totals.contingencyMult[1]]
+                  : totals.baseTotal;
+                
+                return (
+                  <>
+                    <div className="text-4xl font-bold tracking-tighter mb-1 mt-4">
+                      {formatCurrency(currentTotal[0])} —
+                    </div>
+                    <div className="text-4xl font-bold tracking-tighter text-white/40 mb-8">
+                      {formatCurrency(currentTotal[1])}
+                    </div>
 
-              <div className="detail-list flex-1 overflow-y-auto space-y-4 mb-8 pr-2 scrollbar-dark">
-                {totals.items.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-baseline gap-4 text-[11px] text-white/70">
-                    <span className="font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">{item.name}</span>
-                    <div className="h-[1px] grow bg-white/5 mx-2"></div>
-                    <span className="shrink-0 font-bold text-white/40">{formatCurrency(item.range[0])}</span>
-                  </div>
-                ))}
-              </div>
+                    <div className="flex items-center justify-between p-4 mb-8 bg-white/10 rounded-2xl border border-white/10 cursor-pointer hover:bg-white/20 transition-all" onClick={() => setIncludeContingency(!includeContingency)}>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-brand-accent">Margine Cautelativo</span>
+                        <span className="text-[9px] text-white/50 uppercase font-bold">
+                          Incremento per rischi di cantiere ({formatCurrency(currentTotal[0] - totals.baseTotal[0])} - {formatCurrency(currentTotal[1] - totals.baseTotal[1])})
+                        </span>
+                        {totals.riskFactor > 0 && (
+                          <span className="text-[8px] text-brand-accent/60 uppercase font-black tracking-tighter mt-1">
+                            + {totals.riskFactor.toFixed(0)}% Incremento per Complessità Tecnica
+                          </span>
+                        )}
+                      </div>
+                      <div className={`w-10 h-5 rounded-full relative transition-all ${includeContingency ? 'bg-brand-accent' : 'bg-white/20'}`}>
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${includeContingency ? 'left-6' : 'left-1'}`}></div>
+                      </div>
+                    </div>
 
-              <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4 mb-8">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-[0.15em] text-white/40">
-                  <span>Imprevisti ({precision === 'preliminary' ? '15%' : precision === 'developed' ? '10%' : '5%'})</span>
-                  <span className="text-brand-accent flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> Calcolati</span>
-                </div>
-                <div className="flex justify-between items-end">
-                  <span className="text-[10px] font-black uppercase tracking-[0.15em] opacity-40">Incidenza / mq</span>
-                  <span className="text-xl font-bold tracking-tight text-brand-accent">
-                    ~ {formatCurrency(totals.total[0] / area)} / mq
-                  </span>
-                </div>
-              </div>
+                    <div className="h-px w-full bg-white/10 mb-8"></div>
+
+                    <div className="detail-list flex-1 overflow-y-auto space-y-4 mb-8 pr-2 scrollbar-dark">
+                      {totals.items.map((item, idx) => (
+                        <div key={idx} className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-2">
+                          <div className="flex justify-between items-baseline gap-4 text-[11px] text-white">
+                            <span className="font-bold tracking-tight">{item.name}</span>
+                            <span className="shrink-0 font-black text-brand-accent">{formatCurrency(item.range[0])}</span>
+                          </div>
+                          {(item.posa || item.supply) && (
+                            <div className="flex gap-4 text-[9px] font-bold uppercase tracking-widest opacity-40">
+                              {item.posa && <span>Opere: {formatCurrency(item.posa[0])}</span>}
+                              {item.supply && <span>Fornitura: {formatCurrency(item.supply[0])}</span>}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4 mb-8">
+                      <div className="flex justify-between items-end">
+                        <span className="text-[10px] font-black uppercase tracking-[0.15em] opacity-40">Incidenza / mq</span>
+                        <span className="text-xl font-bold tracking-tight text-brand-accent">
+                          ~ {formatCurrency(currentTotal[0] / area)} / mq
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
 
               <p className="disclaimer text-[9px] leading-relaxed text-white/20 font-medium">
                 * Stima algoritmica basata su listini DEI 2024. Il presente calcolo non costituisce preventivo contrattuale. Escluso: IVA, Arredi Mobili, Oneri Tecnici.
@@ -1485,6 +1630,29 @@ export default function App() {
               <ExternalLink className="w-4 h-4 text-brand-accent" />
               Esporta PDF di Progetto
             </button>
+            
+            {/* SAVE ACTION AT THE END */}
+            <div className="mt-6 glass p-8 rounded-3xl border border-black/5 flex flex-col items-center gap-4 text-center">
+              <div>
+                <h3 className="text-sm font-bold tracking-tight mb-1">Salva Progetto</h3>
+                <p className="text-[9px] text-brand-dark/40 uppercase tracking-widest font-black">
+                  Registra nell'archivio cloud
+                </p>
+              </div>
+              <button 
+                onClick={saveEstimate}
+                disabled={isSaving || !clientName}
+                className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-black uppercase tracking-widest text-[9px] transition-all ${
+                  clientName 
+                    ? 'bg-brand-dark text-white shadow-lg hover:scale-[1.02] active:scale-95' 
+                    : 'bg-black/5 text-brand-dark/20 cursor-not-allowed border border-black/5'
+                }`}
+              >
+                {isSaving ? <CheckCircle2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                {isSaving ? 'In corso...' : 'Salva Ora'}
+              </button>
+              {!clientName && <p className="text-[8px] text-brand-accent font-bold uppercase tracking-widest">Inserisci nome cliente per salvare</p>}
+            </div>
           </div>
         </div>
       </main>
