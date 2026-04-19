@@ -648,20 +648,28 @@ export default function App() {
       clientName,
       date: new Date().toISOString(),
       total: totals.baseTotal,
-      items: totals.items,
+      items: totals.items.map(item => ({
+        name: item.name,
+        range: item.range,
+        posa: item.posa || null,
+        supply: item.supply || null
+      })),
       config,
       userId: user?.uid || 'local-user'
     };
+
+    // Remove any undefined values that would break Firestore
+    const cleanData = JSON.parse(JSON.stringify(estimateData));
 
     try {
       if (user) {
         if (currentProjectID && currentProjectID.startsWith('cloud-')) {
           const docId = currentProjectID.replace('cloud-', '');
-          await updateDoc(doc(db, 'estimates', docId), estimateData);
+          await updateDoc(doc(db, 'estimates', docId), cleanData);
           alert("Stima aggiornata correttamente in Cloud.");
         } else {
-          estimateData.pinned = false;
-          const docRef = await addDoc(collection(db, 'estimates'), estimateData);
+          cleanData.pinned = false;
+          const docRef = await addDoc(collection(db, 'estimates'), cleanData);
           setCurrentProjectID(`cloud-${docRef.id}`);
           alert("Stima salvata correttamente in Cloud.");
         }
@@ -673,13 +681,14 @@ export default function App() {
         if (currentProjectID && currentProjectID.startsWith('local-')) {
           const idx = localData.findIndex((d: any) => d.id === currentProjectID);
           if (idx !== -1) {
-            localData[idx] = { ...localData[idx], ...estimateData };
+            localData[idx] = { ...localData[idx], ...cleanData, id: currentProjectID };
             alert("Stima aggiornata localmente.");
           }
         } else {
-          estimateData.pinned = false;
+          cleanData.pinned = false;
           const newId = `local-${Date.now()}`;
-          localData.push({ id: newId, ...estimateData });
+          cleanData.id = newId;
+          localData.push(cleanData);
           setCurrentProjectID(newId);
           alert("Stima salvata localmente (Sincronizzazione Cloud disattivata).");
         }
